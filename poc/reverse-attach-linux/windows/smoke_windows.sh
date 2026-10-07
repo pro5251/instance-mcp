@@ -42,7 +42,7 @@ check "serverInfo is the POC name" "[[ '$name' == oab-imcp-winpoc ]]"
 python3 -c 'import json,sys;t=json.load(open(sys.argv[1]))["result"]["instructions"];assert "Windows" in t and "locked" in t' "$WORK/last.json"; rc=$?
 check "instructions describe Windows" "[[ $rc == 0 ]]"
 rpc tools/list
-check "tools/list = sys_info,screenshot,mouse,key,powershell" "[[ \$(python3 -c 'import json,sys;print(\",\".join(t[\"name\"] for t in json.load(open(sys.argv[1]))[\"result\"][\"tools\"]))' '$WORK/last.json') == sys_info,screenshot,mouse,key,powershell ]]"
+check "tools/list = sys_info,screenshot,mouse,key,powershell,exec_start,exec_poll,exec_list,exec_cancel" "[[ \$(python3 -c 'import json,sys;print(\",\".join(t[\"name\"] for t in json.load(open(sys.argv[1]))[\"result\"][\"tools\"]))' '$WORK/last.json') == sys_info,screenshot,mouse,key,powershell,exec_start,exec_poll,exec_list,exec_cancel ]]"
 
 echo "== sys_info =="
 rpc tools/call '{"name":"sys_info","arguments":{}}'
@@ -214,6 +214,33 @@ check "output was collected despite the survivor (drain was not lost)" "grep -q 
 
 out=$(psh "{\"command\":\"$(python3 -c 'print("x"*32001)')\"}" | head -1)
 check "an over-long command is refused" "[[ '$out' == ERR*'too long'* ]]"
+
+
+echo "== background jobs (exec_start/poll/list/cancel) =="
+field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["result"]["structuredContent"].get(sys.argv[2],""))' "$WORK/last.json" "$1"; }
+# incremental poll by offset, to terminal state
+rpc tools/call '{"name":"exec_start","arguments":{"command":"1..3 | ForEach-Object { Write-Output \"line $_\"; Start-Sleep -Milliseconds 400 }"}}'
+JID=$(field job_id); JSTATE=$(field state)
+check "exec_start returns a job_id and running state" "[[ -n '$JID' && '$JSTATE' == running ]]"
+sleep 0.6
+rpc tools/call "{\"name\":\"exec_poll\",\"arguments\":{\"job_id\":\"$JID\"}}"
+NEXT=$(field stdout_next); FIRST=$(field stdout)
+check "exec_poll streams partial output while running" "[[ \$(field state) == running && '$FIRST' == *'line 1'* ]]"
+sleep 1.2
+rpc tools/call "{\"name\":\"exec_poll\",\"arguments\":{\"job_id\":\"$JID\",\"stdout_since\":$NEXT}}"
+check "exec_poll from the offset returns only new output and the final state" "[[ \$(field state) == exited && \$(field exit_code) == 0 && \$(field stdout) == *'line 3'* && \$(field stdout) != *'line 1'* ]]"
+rpc tools/call '{"name":"exec_list","arguments":{}}'
+check "exec_list includes the finished job" "python3 -c 'import json,sys;j=json.load(open(sys.argv[1]))[\"result\"][\"structuredContent\"][\"jobs\"];sys.exit(0 if any(x[\"job_id\"]==sys.argv[2] for x in j) else 1)' '$WORK/last.json' '$JID'"
+# cancel a long job
+rpc tools/call '{"name":"exec_start","arguments":{"command":"Start-Sleep 30"}}'
+KID=$(field job_id); sleep 0.4
+rpc tools/call "{\"name\":\"exec_cancel\",\"arguments\":{\"job_id\":\"$KID\"}}"
+check "exec_cancel KILL signals the job" "[[ \$(field signalled) == True ]]"
+sleep 0.3
+rpc tools/call "{\"name\":\"exec_cancel\",\"arguments\":{\"job_id\":\"$KID\"}}"
+check "exec_cancel on a finished job drops it" "[[ \$(field dropped) == True ]]"
+out=$(rpc tools/call '{"name":"exec_poll","arguments":{"job_id":"no-such"}}'; python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("error",{}).get("message",""))' "$WORK/last.json")
+check "exec_poll on an unknown job_id is a clear error" "[[ '$out' == *'unknown job_id'* ]]"
 
 echo "== profiles over the attach plane are unchanged (forced call) =="
 rpc tools/call '{"name":"bash","arguments":{"command":"x"}}'
