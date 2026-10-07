@@ -1,0 +1,139 @@
+{
+  "id": 2,
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      {
+        "description": "Report OS, CPU, memory, architecture and hostname of this node.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "name": "sys_info"
+      },
+      {
+        "description": "Capture the node's Wayland display (via grim) and return it as an image. Default PNG at scale 0.5 (960x540 for a 1080p output). jpeg only if the node's grim was built with JPEG support (Debian's is not).",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "description": "default png",
+              "enum": [
+                "jpeg",
+                "png"
+              ],
+              "type": "string"
+            },
+            "quality": {
+              "description": "jpeg quality 1-100, default 80",
+              "type": "integer"
+            },
+            "scale": {
+              "description": "output scale factor, default 0.5",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "name": "screenshot"
+      },
+      {
+        "description": "Run a command with `bash -c` on this node as the daemon user. Returns stdout, stderr, exit code and duration. The whole process group is killed on timeout (exit 137, timed_out=true). Output is capped per stream.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "description": "working directory; leading ~ expands to $HOME",
+              "type": "string"
+            },
+            "max_output_bytes": {
+              "description": "per stream, default 65536, max 1048576",
+              "type": "integer"
+            },
+            "timeout_secs": {
+              "description": "default 60, max 600",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        },
+        "name": "bash"
+      },
+      {
+        "description": "Pointer input on this node's Wayland display (wlroots virtual pointer). Coordinates are display pixels = screenshot pixels at scale 1 (1920x1080 here). Actions: move, click, double_click, right_click, drag (x,y → to_x,to_y), scroll (dy/dx in wheel notches/lines, positive = down/right).",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "move",
+                "click",
+                "double_click",
+                "right_click",
+                "drag",
+                "scroll"
+              ],
+              "type": "string"
+            },
+            "dx": {
+              "type": "number"
+            },
+            "dy": {
+              "type": "number"
+            },
+            "to_x": {
+              "type": "number"
+            },
+            "to_y": {
+              "type": "number"
+            },
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        "name": "mouse"
+      },
+      {
+        "description": "Keyboard input via wtype. `type`: send text (unicode, layout independent). `press`: a key combo such as \"Return\", \"Tab\", \"ctrl+c\", \"ctrl+shift+t\", \"alt+F4\" (xkb key names; modifiers ctrl/shift/alt/super).",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "enum": [
+                "type",
+                "press"
+              ],
+              "type": "string"
+            },
+            "combo": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        "name": "key"
+      }
+    ]
+  }
+}

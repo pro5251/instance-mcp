@@ -449,6 +449,56 @@ pub(crate) fn handle_tool_call(params: &Value, profile: &str) -> Result<Value, (
 
 // ---------------------------------------------------------------------------
 
+/// The Linux MCP surface as callers see it, pinned byte-for-byte so a refactor or a
+/// feature added for another platform cannot change it unnoticed. Regenerate only on
+/// purpose: `UPDATE_GOLDEN=1 cargo test golden`, then review the diff.
+#[cfg(all(test, target_os = "linux"))]
+mod golden_tests {
+    use super::*;
+
+    fn check(name: &str, request: &str, profile: &str) {
+        let reply = answer(request, profile).expect("a request with an id gets a reply");
+        let got: Value = serde_json::from_str(&reply).expect("reply is JSON");
+        let got = serde_json::to_string_pretty(&got).expect("serialises") + "\n";
+        let path = format!("{}/tests/golden/{name}.json", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &got).expect("write golden");
+        }
+        let want = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{path}: {e} (run with UPDATE_GOLDEN=1 to create)"));
+        assert_eq!(got, want, "{name} drifted from {path}");
+    }
+
+    #[test]
+    fn golden_initialize() {
+        check(
+            "initialize",
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            "owner",
+        );
+    }
+
+    #[test]
+    fn golden_tools_list_per_profile() {
+        for profile in ["owner", "desktop", "observe"] {
+            check(
+                &format!("tools_list_{profile}"),
+                r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+                profile,
+            );
+        }
+    }
+
+    #[test]
+    fn golden_observe_refuses_a_forced_shell_call() {
+        check(
+            "observe_forced_bash",
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"bash","arguments":{"command":"id"}}}"#,
+            "observe",
+        );
+    }
+}
+
 #[cfg(test)]
 mod profile_tests {
     use super::*;

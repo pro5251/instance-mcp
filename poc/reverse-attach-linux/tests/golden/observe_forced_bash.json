@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": -32601,
+    "message": "unknown tool: bash"
+  },
+  "id": 3,
+  "jsonrpc": "2.0"
+}

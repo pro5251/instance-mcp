@@ -1,0 +1,43 @@
+{
+  "id": 2,
+  "jsonrpc": "2.0",
+  "result": {
+    "tools": [
+      {
+        "description": "Report OS, CPU, memory, architecture and hostname of this node.",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {},
+          "type": "object"
+        },
+        "name": "sys_info"
+      },
+      {
+        "description": "Capture the node's Wayland display (via grim) and return it as an image. Default PNG at scale 0.5 (960x540 for a 1080p output). jpeg only if the node's grim was built with JPEG support (Debian's is not).",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "description": "default png",
+              "enum": [
+                "jpeg",
+                "png"
+              ],
+              "type": "string"
+            },
+            "quality": {
+              "description": "jpeg quality 1-100, default 80",
+              "type": "integer"
+            },
+            "scale": {
+              "description": "output scale factor, default 0.5",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "name": "screenshot"
+      }
+    ]
+  }
+}
