@@ -145,7 +145,7 @@ pub(crate) fn parse_mcp_body(body: &str) -> Result<Value, String> {
 // ---------------------------------------------------------------------------
 
 pub fn serve() {
-    let bind = std::env::var("BIND").unwrap_or_else(|_| "127.0.0.1:8790".to_string());
+    let bind = std::env::var("BIND").unwrap_or_else(|_| crate::platform::DEFAULT_BIND.to_string());
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
     match store::init_from_env() {
         Some(path) => eprintln!("grants: persisted at {}", path.display()),

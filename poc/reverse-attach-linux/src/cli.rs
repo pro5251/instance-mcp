@@ -119,6 +119,11 @@ impl Flags {
             let (env_host, env_port) = bind_env
                 .and_then(|b| b.rsplit_once(':'))
                 .map(|(h, p)| (h.to_string(), p.to_string()))
+                .or_else(|| {
+                    crate::platform::DEFAULT_BIND
+                        .rsplit_once(':')
+                        .map(|(h, p)| (h.to_string(), p.to_string()))
+                })
                 .unwrap_or_else(|| ("127.0.0.1".to_string(), "8790".to_string()));
             let host = self.host.clone().unwrap_or(env_host);
             let port = self.port.map(|p| p.to_string()).unwrap_or(env_port);

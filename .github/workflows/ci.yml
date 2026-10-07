@@ -117,3 +117,30 @@ jobs:
         with:
           name: reverse-attach-linux-${{ matrix.arch }}
           path: poc/reverse-attach-linux/target/release/reverse-attach
+
+  windows-hands-node:
+    # Windows POC build (MSVC, static CRT). Desktop tools need an interactive session,
+    # which runners lack: windows/smoke_windows.sh is run on a real desktop instead.
+    name: Windows hands node (x64, POC)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: poc/reverse-attach-linux
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: poc/reverse-attach-linux
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --release
+      - name: Unit tests
+        run: cargo test --release

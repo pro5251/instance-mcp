@@ -290,14 +290,20 @@ pub(crate) fn answer(text: &str, profile: &str) -> Option<String> {
     let params = req.get("params").cloned().unwrap_or(Value::Null);
 
     let result: Result<Value, (i64, String)> = match method {
-        "initialize" => Ok(json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {} },
-            "serverInfo": {
-                "name": "instance-mcp-rpi",
-                "version": "0.3.0"
+        "initialize" => {
+            let mut result = json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": {
+                    "name": crate::platform::SERVER_NAME,
+                    "version": crate::platform::SERVER_VERSION
+                }
+            });
+            if let Some(text) = crate::platform::SERVER_INSTRUCTIONS {
+                result["instructions"] = json!(text);
             }
-        })),
+            Ok(result)
+        }
         "tools/list" => Ok(json!({ "tools": tool_list(profile) })),
         "tools/call" => handle_tool_call(&params, profile),
         other => Err((-32601, format!("method not found: {other}"))),

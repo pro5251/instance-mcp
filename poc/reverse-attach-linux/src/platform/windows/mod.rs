@@ -1,56 +1,44 @@
-//! Windows backend (POC, in progress). This skeleton only makes the crate build for
-//! Windows: it serves no local tools yet, and grant persistence stays off until
-//! owner-only files are implemented with a protected DACL (spec §6.2), rather than
-//! writing attach secrets with whatever ACL the directory happens to inherit.
+//! Windows backend (POC). Names are the POC names of spec §13.2 and are pending the
+//! author's confirmation; tool names are the functional contract and do not change.
 
+mod capture;
+mod desk;
 pub(crate) mod private_fs;
+mod sysinfo;
+mod tools;
 
-use super::desktop::{Button, Capture, Combo, Desktop, DesktopError};
-use crate::tools::LocalTool;
+pub(crate) use tools::LOCAL_TOOLS;
 
-pub(crate) static LOCAL_TOOLS: &[LocalTool] = &[];
+/// POC names (spec §13.2), all pending the author's confirmation.
+pub(crate) const SERVER_NAME: &str = "oab-imcp-winpoc";
+pub(crate) const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const DEFAULT_BIND: &str = "127.0.0.1:8796";
 
-struct Unavailable;
+/// Same role as the macOS daemon's initialize instructions: how to work this
+/// computer, in its own terms.
+pub(crate) const SERVER_INSTRUCTIONS: Option<&str> = Some(
+    "You are operating a real Windows computer through its logged-in desktop session; a human \
+     may be watching the screen. Work in a see→act→see loop: `screenshot`, decide, act, then \
+     `screenshot` again to confirm — never assume an action landed.\n\
+     Coordinates are physical pixels relative to the top-left of the chosen `display` (0 = the \
+     primary display). At `scale: 1` an image pixel (x,y) is exactly that coordinate; at the \
+     default scale 0.5 divide by 0.5. To read small text pass `region: {x,y,width,height}` with \
+     `scale: 1` or more; the crop's pixel (px,py) is (region.x + px/scale, region.y + py/scale).\n\
+     When the screen is locked or a UAC prompt is up, the tools fail instead of acting. \
+     Call `sys_info` when unsure which displays exist or what is available.",
+);
 
-const NOT_YET: &str = "this Windows build has no desktop backend yet";
-
-impl Desktop for Unavailable {
-    fn display_ok(&self) -> bool {
-        false
-    }
-    fn capture(&self, _: f64, _: &str, _: i64) -> Result<Capture, DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn pointer_goto(&self, _: f64, _: f64) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn pointer_move_rel(&self, _: f64, _: f64) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn pointer_click(&self, _: Button) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn pointer_press(&self, _: Button) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn pointer_release(&self, _: Button) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn pointer_scroll(&self, _: f64, _: f64) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn key_type(&self, _: &str) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
-    }
-    fn key_press(&self, _: &Combo) -> Result<(), DesktopError> {
-        Err(NOT_YET.to_string())
+/// Per-monitor v2 DPI awareness before anything measures the screen: without it a
+/// scaled monitor is virtualised (a 125% 1920×1200 display reports 1536×960) and
+/// screenshot pixels stop matching input coordinates (spec §4.2, spike 1).
+pub fn warm_up() {
+    use windows_sys::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    // SAFETY: plain Win32 call with a documented constant; failure means the process
+    // already has an awareness (e.g. from a manifest), which is logged.
+    let ok = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    if ok == 0 {
+        eprintln!("dpi: could not set per-monitor v2 awareness (already set by a manifest?)");
     }
 }
-
-static UNAVAILABLE: Unavailable = Unavailable;
-
-pub fn desktop() -> &'static dyn Desktop {
-    &UNAVAILABLE
-}
-
-pub fn warm_up() {}

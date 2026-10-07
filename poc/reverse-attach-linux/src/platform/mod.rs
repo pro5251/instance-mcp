@@ -2,6 +2,7 @@
 //! start-up warm-up, and owner-only files for secrets. `cfg(target_os)` picks one per
 //! build, so no platform's code is compiled into another's binary.
 
+#[cfg(target_os = "linux")]
 pub mod desktop;
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -14,12 +15,13 @@ use linux as current;
 use windows as current;
 
 pub(crate) use current::private_fs;
-pub(crate) use current::LOCAL_TOOLS;
+pub(crate) use current::{
+    DEFAULT_BIND, LOCAL_TOOLS, SERVER_INSTRUCTIONS, SERVER_NAME, SERVER_VERSION,
+};
 
-use desktop::Desktop;
-
-/// The desktop backend for this node.
-pub fn desktop() -> &'static dyn Desktop {
+/// The desktop backend for this node (Linux tools are written against this trait).
+#[cfg(target_os = "linux")]
+pub fn desktop() -> &'static dyn desktop::Desktop {
     current::desktop()
 }
 
