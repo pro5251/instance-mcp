@@ -180,7 +180,11 @@ pub fn serve() {
         }
     };
     eprintln!("reverse-attach control server listening on {bind}");
-    resume_grants(&registry);
+    if crate::cli::options().attach {
+        resume_grants(&registry);
+    } else {
+        eprintln!("attach: disabled (--no-attach); /attach answers 404");
+    }
 
     for stream in listener.incoming() {
         match stream {
@@ -495,9 +499,17 @@ fn handle_conn(
         }
     };
 
+    let options = crate::cli::options();
+    let mcp = route == options.mcp_path;
+    let attach_route = route == "/attach" || route.starts_with("/attach/");
+    if attach_route && !options.attach {
+        let body = json!({ "error": "not found" }).to_string();
+        write_response(&mut stream, 404, "Not Found", &body);
+        return Ok(());
+    }
     match (req.method.as_str(), route.as_str()) {
-        ("POST", "/mcp") => handle_mcp(&mut stream, &req.body),
-        ("GET", "/mcp") => {
+        ("POST", _) if mcp => handle_mcp(&mut stream, &req.body),
+        ("GET", _) if mcp => {
             // No server-initiated stream in this PoC.
             write_response(
                 &mut stream,
@@ -507,7 +519,7 @@ fn handle_conn(
             );
             Ok(())
         }
-        ("DELETE", "/mcp") => {
+        ("DELETE", _) if mcp => {
             write_raw(&mut stream, 204, "No Content", "text/plain", b"", &[]);
             Ok(())
         }

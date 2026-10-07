@@ -116,12 +116,23 @@ Live grants are written to `MCP_GRANTS_FILE` (default `$XDG_STATE_HOME/oab-insta
 id. Smoke covers `kill -9` → restart → redial, same id, secret absent from `GET /attach`, and a
 revoked grant not resumed.
 
+## Command-line flags (same names as the macOS daemon)
+
+Every environment variable above also has the macOS daemon's flag, so Connect / Remote
+instructions apply to both platforms. A flag wins over its variable; with no flags nothing
+changes. `--host`/`--port` (`BIND`), `--allow-login` (repeatable, `MCP_ALLOW_LOGIN`),
+`--token` / `--token-file` (`MCP_TOKEN` / `MCP_TOKEN_FILE`), `--insecure-local`,
+`--upstream name=url` (repeatable, `MCP_UPSTREAM`), `--no-grant-persistence`
+(`MCP_GRANTS_FILE=off`), plus `--path` (default `/mcp`), `--no-attach` (`/attach` → 404),
+`--public-url`, `--version` and `--help`. An unknown flag exits 64 with the usage, like
+macOS. `smoke_cli.sh` covers them.
+
 ## Not yet (vs the Swift implementation)
 
 - `/mcp` has no real session table (an `Mcp-Session-Id` is issued but not checked) and no SSE stream.
 - Screenshot is PNG only (≈2 MB per 1080p frame); Connect polls at ≤2 FPS, so expect ~4 MB/s. A
   JPEG encoder in-process (or a grim with libjpeg) is the fix.
-- `wss://` runtimes: dial works (rustls), mint over https does not.
+- `--quiet`, `--menu-bar` and `--switchboard*` are not available here yet.
 - Real-runtime test against the p1 openab-pty pod is pending: rpi1 is **not on the tailnet**
   (no `tailscale` binary; `100.111.174.31:8090` times out) and the pod's `PTY_ADMIN_HASH` is a
   hash, so the admin credential must come from the operator.

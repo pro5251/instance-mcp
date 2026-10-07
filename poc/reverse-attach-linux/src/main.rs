@@ -8,12 +8,30 @@
 
 mod attach;
 mod auth;
+mod cli;
 mod http;
 mod mcp;
 mod platform;
 mod tools;
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match cli::parse(&args) {
+        Ok(cli::Invocation::Run(flags)) => flags.apply(),
+        Ok(cli::Invocation::Version) => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        // Same exit code as the macOS daemon's usage().
+        Ok(cli::Invocation::Help) => {
+            println!("{}", cli::USAGE);
+            std::process::exit(64);
+        }
+        Err(e) => {
+            eprintln!("{e}\n\n{}", cli::USAGE);
+            std::process::exit(64);
+        }
+    }
     platform::warm_up();
     http::serve();
 }

@@ -111,6 +111,8 @@ jobs:
         run: bash smoke.sh
       - name: Smoke over TLS (https mint, wss dial, prompt DELETE)
         run: bash smoke_tls.sh
+      - name: Smoke for the macOS-compatible flags
+        run: bash smoke_cli.sh
       - uses: actions/upload-artifact@v4
         with:
           name: reverse-attach-linux-${{ matrix.arch }}
