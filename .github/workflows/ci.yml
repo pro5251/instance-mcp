@@ -109,6 +109,8 @@ jobs:
         # Exercises /attach, mint, disposition, MCP dispatch and bash; the
         # screenshot/mouse/key tools are listed but not invoked (no seat here).
         run: bash smoke.sh
+      - name: Smoke over TLS (https mint, wss dial, prompt DELETE)
+        run: bash smoke_tls.sh
       - uses: actions/upload-artifact@v4
         with:
           name: reverse-attach-linux-${{ matrix.arch }}

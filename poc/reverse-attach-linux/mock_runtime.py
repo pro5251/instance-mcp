@@ -16,8 +16,10 @@ Env:
   CLOSES      comma-separated close codes to use on successive attaches
               (default "1000,4010"); last one repeats
   LOG         JSON-lines file for observed traffic (default /tmp/mock-runtime.jsonl)
+  TLS_CERT    with TLS_KEY: serve HTTPS/WSS with this PEM certificate (default: plain)
+  TLS_KEY     PEM private key for TLS_CERT
 """
-import base64, hashlib, json, os, socket, struct, sys, threading, time, urllib.parse
+import base64, hashlib, json, os, socket, ssl, struct, sys, threading, time, urllib.parse
 
 PORT = int(os.environ.get("PORT", "18090"))
 ADMIN = os.environ.get("ADMIN", "admin-secret")
@@ -215,10 +217,25 @@ def main():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", PORT))
     srv.listen(8)
-    log({"ev": "listening", "port": PORT, "closes": CLOSES, "preminted": sorted(secrets)})
+    tls = None
+    if os.environ.get("TLS_CERT"):
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(os.environ["TLS_CERT"], os.environ["TLS_KEY"])
+    log({"ev": "listening", "port": PORT, "closes": CLOSES, "preminted": sorted(secrets), "tls": tls is not None})
     while True:
         c, a = srv.accept()
-        threading.Thread(target=handle, args=(c, a), daemon=True).start()
+        threading.Thread(target=serve, args=(c, a, tls), daemon=True).start()
+
+
+def serve(conn, addr, tls):
+    if tls is not None:
+        try:
+            conn = tls.wrap_socket(conn, server_side=True)
+        except (ssl.SSLError, OSError) as e:
+            log({"ev": "tls_handshake_failed", "err": repr(e)})
+            conn.close()
+            return
+    handle(conn, addr)
 
 
 if __name__ == "__main__":
