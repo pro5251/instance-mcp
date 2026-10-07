@@ -3,6 +3,7 @@
 use serde_json::{json, Value};
 
 use super::capture::tool_screenshot;
+use super::input::{tool_key, tool_mouse};
 use super::sysinfo::tool_sys_info;
 use crate::mcp::ToolClass;
 use crate::tools::LocalTool;
@@ -20,7 +21,68 @@ pub(crate) static LOCAL_TOOLS: &[LocalTool] = &[
         listing: screenshot_listing,
         call: tool_screenshot,
     },
+    LocalTool {
+        name: "mouse",
+        class: ToolClass::Shell, // can open a terminal
+        listing: mouse_listing,
+        call: tool_mouse,
+    },
+    LocalTool {
+        name: "key",
+        class: ToolClass::Shell, // can type into one
+        listing: key_listing,
+        call: tool_key,
+    },
 ];
+
+fn mouse_listing() -> Value {
+    json!({
+        "name": "mouse",
+        "description": "Mouse input on this Windows computer (SendInput). Coordinates are physical \
+                        pixels relative to the top-left of `display` (0 = primary) — the same space \
+                        as `screenshot` at scale 1. Actions: move, click, double_click, right_click, \
+                        drag (x,y → to_x,to_y), scroll (dy/dx in wheel notches, positive = down/right; \
+                        the opposite sign of macOS). `modifiers` (e.g. [\"ctrl\"], [\"shift\"]) are held \
+                        during a click.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["move", "click", "double_click", "right_click", "drag", "scroll"] },
+                "x": { "type": "number" }, "y": { "type": "number" },
+                "to_x": { "type": "number" }, "to_y": { "type": "number" },
+                "dx": { "type": "number" }, "dy": { "type": "number" },
+                "display": { "type": "integer", "description": "display index, 0 = primary" },
+                "modifiers": { "type": "array", "items": { "type": "string" }, "description": "held during a click" }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn key_listing() -> Value {
+    json!({
+        "name": "key",
+        "description": "Keyboard input on this Windows computer (SendInput). `type`: send `text` as \
+                        Unicode into the focused window (any script, emoji included; newlines become \
+                        Enter; the window's IME is paused while typing). `press`: a `combo` such as \
+                        \"Return\", \"ctrl+c\", \"alt+F4\", or `keys`, a list run in order. Key names \
+                        follow xkb or macOS; `cmd` means ctrl, `super`/`win` is the Windows key. \
+                        `delay_ms` paces characters/combos.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": { "type": "string", "enum": ["type", "press"] },
+                "text": { "type": "string" },
+                "combo": { "type": "string" },
+                "keys": { "type": "array", "items": { "type": "string" } },
+                "delay_ms": { "type": "integer" }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }
+    })
+}
 
 fn sys_info_listing() -> Value {
     json!({

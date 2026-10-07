@@ -3,6 +3,7 @@
 
 mod capture;
 mod desk;
+mod input;
 pub(crate) mod private_fs;
 mod sysinfo;
 mod tools;
@@ -19,7 +20,9 @@ pub(crate) const DEFAULT_BIND: &str = "127.0.0.1:8796";
 pub(crate) const SERVER_INSTRUCTIONS: Option<&str> = Some(
     "You are operating a real Windows computer through its logged-in desktop session; a human \
      may be watching the screen. Work in a see→act→see loop: `screenshot`, decide, act, then \
-     `screenshot` again to confirm — never assume an action landed.\n\
+     `screenshot` again to confirm — never assume an action landed. Act with `mouse` and \
+     `key`; a successful result means the input was sent, not that it landed, because \
+     Windows silently drops input aimed at a window running as administrator.\n\
      Coordinates are physical pixels relative to the top-left of the chosen `display` (0 = the \
      primary display). At `scale: 1` an image pixel (x,y) is exactly that coordinate; at the \
      default scale 0.5 divide by 0.5. To read small text pass `region: {x,y,width,height}` with \

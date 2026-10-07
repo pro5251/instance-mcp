@@ -42,7 +42,7 @@ check "serverInfo is the POC name" "[[ '$name' == oab-imcp-winpoc ]]"
 python3 -c 'import json,sys;t=json.load(open(sys.argv[1]))["result"]["instructions"];assert "Windows" in t and "locked" in t' "$WORK/last.json"; rc=$?
 check "instructions describe Windows" "[[ $rc == 0 ]]"
 rpc tools/list
-check "tools/list = sys_info,screenshot" "[[ \$(python3 -c 'import json,sys;print(\",\".join(t[\"name\"] for t in json.load(open(sys.argv[1]))[\"result\"][\"tools\"]))' '$WORK/last.json') == sys_info,screenshot ]]"
+check "tools/list = sys_info,screenshot,mouse,key" "[[ \$(python3 -c 'import json,sys;print(\",\".join(t[\"name\"] for t in json.load(open(sys.argv[1]))[\"result\"][\"tools\"]))' '$WORK/last.json') == sys_info,screenshot,mouse,key ]]"
 
 echo "== sys_info =="
 rpc tools/call '{"name":"sys_info","arguments":{}}'
@@ -53,7 +53,7 @@ print("agent", s["agent"]["name"], s["agent"]["platform"])
 print("os", s["os"])
 print("desktop", s["permissions"]["input_desktop"], s["permissions"]["screen_recording"])
 print("displays", len(s["displays"]), "main_first", s["displays"][0]["main"])
-for d in s["displays"]: print("display", d["index"], d["pixels"]["width"], d["pixels"]["height"], d["scale_percent"])
+for d in s["displays"]: print("display", d["index"], d["pixels"]["width"], d["pixels"]["height"], d["scale_percent"], d["origin"]["x"], d["origin"]["y"])
 print("text_has_summary", "displays:" in r["content"][0]["text"])
 PY
 cat "$WORK/sys.txt"
@@ -100,6 +100,64 @@ out=$(shot '{"format":"jpeg","quality":0.6}'); read -r m w h dw dh cap <<< "$out
 check "jpeg with 0–1 quality" "[[ $m == image/jpeg ]]"
 out=$(shot '{"display":99}'); check "unknown display is an error" "[[ '$out' == error*'out of range'* ]]"
 out=$(shot '{"scale":9}');    check "bad scale is an error" "[[ '$out' == error*scale* ]]"
+
+
+echo "== mouse / key (only into this script's own test window) =="
+ps1() { local f; f=$(wslpath -w "$1"); shift; cmd.exe /c "set PSModulePath=&& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $f $*" 2>/dev/null | tr -d '\r'; }
+callok() { rpc tools/call "{\"name\":\"$1\",\"arguments\":$2}"; python3 -c 'import json,sys;r=json.load(open(sys.argv[1]));print("ok" if r.get("result",{}).get("structuredContent",{}).get("ok") else "err "+json.dumps(r.get("error")))' "$WORK/last.json"; }
+read -r sx sy _ _ <<< "$(ps1 windows/probe.ps1)"
+T="$WIN_DIR/target-$$"; mkdir -p "$T"; WT=$(wslpath -w "$T")
+(ps1 windows/input_target.ps1 -Out "$WT" > /dev/null 2>&1 &)
+for _ in $(seq 1 50); do [[ -s "$T/target.json" ]] && break; sleep 0.2; done
+read -r HWND BX BY <<< "$(python3 -c 'import json,sys;t=json.load(open(sys.argv[1],encoding="utf-8-sig"));print(t["hwnd"],t["box"]["x"],t["box"]["y"])' "$T/target.json")"
+check "test window is up" "[[ -n '$HWND' ]]"
+check "click into the text box" "[[ \$(callok mouse '{\"action\":\"click\",\"x\":$BX,\"y\":$BY}') == ok ]]"
+sleep 0.3
+read -r _ _ FG _ <<< "$(ps1 windows/probe.ps1)"
+if [[ "$FG" == "$HWND" ]]; then
+  ok "the click brought the test window to the foreground"
+  TEXT='繁體中文，標點「。」emoji 🎉👍 ok'
+  r=$(callok key "{\"action\":\"type\",\"text\":\"$TEXT\"}"); echo "type reply: $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["result"]["structuredContent"])' "$WORK/last.json" 2>&1)"
+  check "key type" "[[ '$r' == ok ]]"
+  check "key press combo (Linux shape)" "[[ \$(callok key '{\"action\":\"press\",\"combo\":\"ctrl+b\"}') == ok ]]"
+  check "key press keys (macOS shape, cmd = ctrl)" "[[ \$(callok key '{\"action\":\"press\",\"keys\":[\"cmd+e\",\"alt+F11\"]}') == ok ]]"
+  check "drag inside the box" "[[ \$(callok mouse '{\"action\":\"drag\",\"x\":$((BX-100)),\"y\":$BY,\"to_x\":$((BX+100)),\"to_y\":$BY}') == ok ]]"
+  check "scroll" "[[ \$(callok mouse '{\"action\":\"scroll\",\"x\":$BX,\"y\":$BY,\"dy\":1}') == ok ]]"
+  check "ctrl-click with modifiers" "[[ \$(callok mouse '{\"action\":\"click\",\"x\":$BX,\"y\":$BY,\"modifiers\":[\"ctrl\"]}') == ok ]]"
+else
+  bad "the test window is not in the foreground (fg=$FG, want $HWND); skipped typing so nothing goes elsewhere"
+fi
+touch "$T/done"
+for _ in $(seq 1 50); do [[ -s "$T/result.json" ]] && break; sleep 0.2; done
+python3 - "$T/result.json" "$TEXT" > "$WORK/target.txt" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1],encoding="utf-8-sig")); want=sys.argv[2]
+print("text_equal", r["text"]==want)
+print("text", r["text"])
+print("keys", ",".join(r["keys"] if isinstance(r["keys"],list) else [r["keys"]]))
+print("layout", r["layout_before"], r["layout_after"])
+PY
+cat "$WORK/target.txt"
+check "typed text arrived exactly (CJK, full-width punctuation, emoji)" "grep -q '^text_equal True' '$WORK/target.txt'"
+check "keyboard layout restored after typing" "awk '\$1==\"layout\" {exit !(\$2==\$3)}' '$WORK/target.txt'"
+check "combos arrived as ctrl+B, ctrl+E, alt+F11" "grep -qE '^keys .*ctrl\+B.*ctrl\+E.*alt\+F11' '$WORK/target.txt'"
+read -r _ _ _ DOWN <<< "$(ps1 windows/probe.ps1)"
+check "no modifier or button left down" "[[ '$DOWN' == 0 ]]"
+echo "-- absolute moves on every display --"
+while read -r _ idx w h _ ox oy; do
+  for pt in "$((w/2)) $((h/2))" "5 5" "$((w-6)) $((h-6))"; do
+    read -r px py <<< "$pt"
+    callok mouse "{\"action\":\"move\",\"display\":$idx,\"x\":$px,\"y\":$py}" >/dev/null
+    # The node reads the cursor back right after moving; a separate probe would race a
+    # human using the mouse.
+    pos=$(python3 -c 'import json,sys;p=json.load(open(sys.argv[1]))["result"]["structuredContent"]["position"];print(p["x"],p["y"])' "$WORK/last.json")
+    check "display $idx ($px,$py) lands exactly (virtual $((ox+px)),$((oy+py)))" "[[ '$pos' == '$px $py' ]]"
+  done
+done < <(grep '^display ' "$WORK/sys.txt")
+out=$(callok mouse '{"action":"move","display":0,"x":99999,"y":1}'); check "point outside the display is refused" "[[ '$out' == err*outside* ]]"
+out=$(callok key '{"action":"press","combo":"ctrl+nope"}'); check "unknown key is refused" "[[ '$out' == err*'unknown key'* ]]"
+ps1 windows/probe.ps1 -SetX "$sx" -SetY "$sy" >/dev/null
+rm -rf "$T"
 
 echo "== profiles over the attach plane are unchanged (forced call) =="
 rpc tools/call '{"name":"bash","arguments":{"command":"x"}}'
