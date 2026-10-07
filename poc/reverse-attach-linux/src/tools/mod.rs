@@ -1,16 +1,37 @@
 //! Local tools. Each returns the MCP tool-result shape via `tool_result`.
+//!
+//! Which tools a node serves is decided by its platform (`platform::LOCAL_TOOLS`):
+//! every entry carries its own boundary class, so a tool cannot be served without
+//! being classified.
 
+#[cfg(unix)]
 pub mod bash;
 pub mod input;
 pub mod screen;
+#[cfg(target_os = "linux")]
 pub mod sysinfo;
 
-pub(crate) use bash::tool_bash;
-pub(crate) use input::{tool_key, tool_mouse};
-pub(crate) use screen::tool_screenshot;
-pub(crate) use sysinfo::tool_sys_info;
-
 use serde_json::{json, Value};
+
+use crate::mcp::ToolClass;
+
+/// A local tool as a platform registers it.
+pub(crate) struct LocalTool {
+    pub(crate) name: &'static str,
+    pub(crate) class: ToolClass,
+    /// The `tools/list` entry (name, description, inputSchema).
+    pub(crate) listing: fn() -> Value,
+    pub(crate) call: fn(&Value) -> Result<Value, (i64, String)>,
+}
+
+/// This node's local tools, in `tools/list` order.
+pub(crate) fn local_tools() -> &'static [LocalTool] {
+    crate::platform::LOCAL_TOOLS
+}
+
+pub(crate) fn local_tool(name: &str) -> Option<&'static LocalTool> {
+    local_tools().iter().find(|t| t.name == name)
+}
 
 // Wrap a structured value into the MCP tool result shape.
 pub fn tool_result(structured: Value) -> Value {

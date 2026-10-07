@@ -149,7 +149,12 @@ pub fn serve() {
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
     match store::init_from_env() {
         Some(path) => eprintln!("grants: persisted at {}", path.display()),
-        None => eprintln!("grants: persistence off (MCP_GRANTS_FILE=off)"),
+        None if std::env::var("MCP_GRANTS_FILE").as_deref() == Ok("off") => {
+            eprintln!("grants: persistence off (MCP_GRANTS_FILE=off)")
+        }
+        None => eprintln!(
+            "grants: persistence off (no state directory on this platform; set MCP_GRANTS_FILE)"
+        ),
     }
     let policy: Arc<AuthPolicy> = match AuthPolicy::from_env() {
         Ok(p) => Arc::new(p),

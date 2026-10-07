@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::http::{http_post, parse_mcp_body, HttpReply};
-use crate::tools::{tool_bash, tool_key, tool_mouse, tool_result, tool_screenshot, tool_sys_info};
+use crate::tools::{local_tool, local_tools};
 
 // Upstream MCP (e.g. @playwright/mcp on loopback), re-served under our tools/list.
 // Mirrors Swift `UpstreamMCP`: Streamable HTTP request/response, session id held
@@ -199,22 +199,10 @@ pub(crate) enum ToolClass {
     Shell,
 }
 
-/// Every local tool, classified. Exhaustive by test: a tool in `LOCAL_TOOL_NAMES`
-/// (or served by `tool_list`) without an entry here fails `profile_tests`, so a new
-/// tool cannot pass the boundary check just by not being listed as dangerous.
-pub(crate) const LOCAL_TOOL_CLASS: &[(&str, ToolClass)] = &[
-    ("sys_info", ToolClass::Observe),
-    ("screenshot", ToolClass::Observe),
-    ("bash", ToolClass::Shell),
-    ("mouse", ToolClass::Shell), // can open a terminal
-    ("key", ToolClass::Shell),   // can type into one
-];
-
+/// The boundary class of a local tool; every registered tool carries one
+/// (`tools::LocalTool::class`), so none can be served unclassified.
 pub(crate) fn local_tool_class(name: &str) -> Option<ToolClass> {
-    LOCAL_TOOL_CLASS
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, c)| *c)
+    local_tool(name).map(|t| t.class)
 }
 
 /// Whether a profile honestly grants the node user's shell (instance-mcp#45).
@@ -327,91 +315,18 @@ pub(crate) fn answer(text: &str, profile: &str) -> Option<String> {
     Some(response.to_string())
 }
 
-pub(crate) const LOCAL_TOOL_NAMES: &[&str] = &["sys_info", "screenshot", "bash", "mouse", "key"];
+/// Names of this node's local tools, in `tools/list` order.
+pub(crate) fn local_tool_names() -> Vec<&'static str> {
+    local_tools().iter().map(|t| t.name).collect()
+}
 
 pub(crate) fn tool_list(profile: &str) -> Value {
-    let sys_info = json!({
-        "name": "sys_info",
-        "description": "Report OS, CPU, memory, architecture and hostname of this node.",
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-    });
-    let screenshot = json!({
-        "name": "screenshot",
-        "description": "Capture the node's Wayland display (via grim) and return it as an image. \
-                        Default PNG at scale 0.5 (960x540 for a 1080p output). jpeg only if the \
-                        node's grim was built with JPEG support (Debian's is not).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "scale":   { "type": "number", "description": "output scale factor, default 0.5" },
-                "format":  { "type": "string", "enum": ["jpeg", "png"], "description": "default png" },
-                "quality": { "type": "integer", "description": "jpeg quality 1-100, default 80" }
-            },
-            "additionalProperties": false
-        }
-    });
-    let bash = json!({
-        "name": "bash",
-        "description": "Run a command with `bash -c` on this node as the daemon user. Returns stdout, \
-                        stderr, exit code and duration. The whole process group is killed on timeout \
-                        (exit 137, timed_out=true). Output is capped per stream.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "command":          { "type": "string" },
-                "cwd":              { "type": "string", "description": "working directory; leading ~ expands to $HOME" },
-                "timeout_secs":     { "type": "integer", "description": "default 60, max 600" },
-                "max_output_bytes": { "type": "integer", "description": "per stream, default 65536, max 1048576" }
-            },
-            "required": ["command"],
-            "additionalProperties": false
-        }
-    });
-
-    let mouse = json!({
-        "name": "mouse",
-        "description": "Pointer input on this node's Wayland display (wlroots virtual pointer). Coordinates \
-                        are display pixels = screenshot pixels at scale 1 (1920x1080 here). Actions: move, \
-                        click, double_click, right_click, drag (x,y → to_x,to_y), scroll (dy/dx in wheel \
-                        notches/lines, positive = down/right).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "action": { "type": "string", "enum": ["move", "click", "double_click", "right_click", "drag", "scroll"] },
-                "x": { "type": "number" }, "y": { "type": "number" },
-                "to_x": { "type": "number" }, "to_y": { "type": "number" },
-                "dx": { "type": "number" }, "dy": { "type": "number" }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        }
-    });
-    let key = json!({
-        "name": "key",
-        "description": "Keyboard input via wtype. `type`: send text (unicode, layout independent). `press`: \
-                        a key combo such as \"Return\", \"Tab\", \"ctrl+c\", \"ctrl+shift+t\", \"alt+F4\" \
-                        (xkb key names; modifiers ctrl/shift/alt/super).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "action": { "type": "string", "enum": ["type", "press"] },
-                "text": { "type": "string" },
-                "combo": { "type": "string" }
-            },
-            "required": ["action"],
-            "additionalProperties": false
-        }
-    });
-
-    // owner and desktop get every local tool, `bash` included: `desktop` is not a boundary
-    // on any platform (instance-mcp#45) — mouse and keyboard reach a terminal, so hiding
-    // `bash` would remove a convenience, not a privilege. `observe` is the real boundary:
-    // sys_info + screenshot only.
-    let mut tools: Vec<Value> = vec![sys_info, screenshot, bash, mouse, key]
-        .into_iter()
-        .filter(|t| local_tool_allowed(t["name"].as_str().unwrap_or_default(), profile))
+    let mut tools: Vec<Value> = local_tools()
+        .iter()
+        .filter(|t| local_tool_allowed(t.name, profile))
+        .map(|t| (t.listing)())
         .collect();
-    for (_, t) in upstream_tools_for(profile, LOCAL_TOOL_NAMES) {
+    for (_, t) in upstream_tools_for(profile, &local_tool_names()) {
         tools.push(t);
     }
     Value::Array(tools)
@@ -426,24 +341,20 @@ pub(crate) fn handle_tool_call(params: &Value, profile: &str) -> Result<Value, (
 
     // A tool hidden from this profile's list is unknown here too, indistinguishable
     // from one that never existed (same rule as the Swift `scoped(to:)`).
-    if LOCAL_TOOL_NAMES.contains(&name) && !local_tool_allowed(name, profile) {
-        return Err((-32601, format!("unknown tool: {name}")));
+    if let Some(tool) = local_tool(name) {
+        if !local_tool_allowed(name, profile) {
+            return Err((-32601, format!("unknown tool: {name}")));
+        }
+        return (tool.call)(&arguments);
     }
-    match name {
-        "sys_info" => Ok(tool_result(tool_sys_info())),
-        "screenshot" => tool_screenshot(&arguments),
-        "bash" => tool_bash(&arguments),
-        "mouse" => tool_mouse(&arguments),
-        "key" => tool_key(&arguments),
-        other => match upstream_owning(other, profile) {
-            Some(up) => up
-                .rpc(
-                    "tools/call",
-                    Some(json!({"name": other, "arguments": arguments})),
-                )
-                .map_err(|e| (-32000, e)),
-            None => Err((-32601, format!("unknown tool: {other}"))),
-        },
+    match upstream_owning(name, profile) {
+        Some(up) => up
+            .rpc(
+                "tools/call",
+                Some(json!({"name": name, "arguments": arguments})),
+            )
+            .map_err(|e| (-32000, e)),
+        None => Err((-32601, format!("unknown tool: {name}"))),
     }
 }
 
@@ -542,11 +453,11 @@ mod profile_tests {
         let served = served("owner");
         let mut sorted_served = served.clone();
         sorted_served.sort();
-        let mut names: Vec<String> = LOCAL_TOOL_NAMES.iter().map(|s| s.to_string()).collect();
+        let mut names: Vec<String> = local_tool_names().iter().map(|s| s.to_string()).collect();
         names.sort();
         assert_eq!(
             sorted_served, names,
-            "tool_list and LOCAL_TOOL_NAMES disagree"
+            "tool_list and the platform's LOCAL_TOOLS disagree"
         );
         let unclassified: Vec<_> = served
             .iter()
@@ -556,11 +467,11 @@ mod profile_tests {
             unclassified.is_empty(),
             "classify in LOCAL_TOOL_CLASS: {unclassified:?}"
         );
-        let stale: Vec<_> = LOCAL_TOOL_CLASS
-            .iter()
-            .filter(|(n, _)| !served.iter().any(|s| s == n))
+        let stale: Vec<_> = local_tool_names()
+            .into_iter()
+            .filter(|n| !served.iter().any(|s| s == n))
             .collect();
-        assert!(stale.is_empty(), "classified but not served: {stale:?}");
+        assert!(stale.is_empty(), "registered but not served: {stale:?}");
     }
 
     #[test]

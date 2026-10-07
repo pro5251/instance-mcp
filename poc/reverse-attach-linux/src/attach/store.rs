@@ -15,13 +15,13 @@
 
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::{json, Value};
 
 use super::{now_epoch_secs, GrantInfo, Registry};
+use crate::platform::private_fs;
 
 const VERSION: u64 = 1;
 
@@ -57,9 +57,7 @@ fn default_path() -> Option<PathBuf> {
         Ok(v) if !v.is_empty() => return Some(PathBuf::from(v)),
         _ => {}
     }
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+    let base = private_fs::state_dir()?;
     Some(base.join("oab-instance-mcp/grants.json"))
 }
 
@@ -119,10 +117,7 @@ impl GrantStore {
     pub(crate) fn write(&self, grants: &[Persisted]) -> std::io::Result<()> {
         let _guard = self.write.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(dir) = self.path.parent() {
-            fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(dir)?;
+            private_fs::create_dir_all(dir)?;
         }
         let body = json!({
             "version": VERSION,
@@ -139,11 +134,7 @@ impl GrantStore {
         let tmp = tmp_path(&self.path);
         let _ = fs::remove_file(&tmp);
         {
-            let mut f = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&tmp)?;
+            let mut f = private_fs::create_new(&tmp)?;
             f.write_all(body.to_string().as_bytes())?;
             f.sync_all()?;
         }
@@ -158,15 +149,7 @@ impl GrantStore {
         };
         // The file holds attach secrets. If something widened it, narrow it back
         // before trusting it, and say so.
-        let mode = meta.permissions().mode() & 0o777;
-        if mode & 0o077 != 0 {
-            eprintln!(
-                "grants: {} was mode {mode:o}; resetting to 600",
-                self.path.display()
-            );
-            fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))
-                .map_err(|e| e.to_string())?;
-        }
+        private_fs::narrow(&self.path, &meta)?;
         let text = fs::read_to_string(&self.path).map_err(|e| e.to_string())?;
         parse(&text, now_epoch_secs())
     }
@@ -206,9 +189,10 @@ pub(crate) fn parse(text: &str, now: u64) -> Result<Vec<Persisted>, String> {
         .collect())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn grant(id: &str, expires: u64) -> Persisted {
         Persisted {
