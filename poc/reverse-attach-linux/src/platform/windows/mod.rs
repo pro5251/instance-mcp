@@ -3,8 +3,10 @@
 
 mod capture;
 mod desk;
+mod exec;
 mod input;
 pub(crate) mod private_fs;
+mod proc;
 mod sysinfo;
 mod tools;
 

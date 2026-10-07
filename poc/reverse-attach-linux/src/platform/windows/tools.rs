@@ -3,6 +3,7 @@
 use serde_json::{json, Value};
 
 use super::capture::tool_screenshot;
+use super::exec;
 use super::input::{tool_key, tool_mouse};
 use super::sysinfo::tool_sys_info;
 use crate::mcp::ToolClass;
@@ -32,6 +33,12 @@ pub(crate) static LOCAL_TOOLS: &[LocalTool] = &[
         class: ToolClass::Shell, // can type into one
         listing: key_listing,
         call: tool_key,
+    },
+    LocalTool {
+        name: "powershell",
+        class: ToolClass::Shell,
+        listing: exec::listing,
+        call: exec::tool_powershell,
     },
 ];
 

@@ -42,7 +42,7 @@ check "serverInfo is the POC name" "[[ '$name' == oab-imcp-winpoc ]]"
 python3 -c 'import json,sys;t=json.load(open(sys.argv[1]))["result"]["instructions"];assert "Windows" in t and "locked" in t' "$WORK/last.json"; rc=$?
 check "instructions describe Windows" "[[ $rc == 0 ]]"
 rpc tools/list
-check "tools/list = sys_info,screenshot,mouse,key" "[[ \$(python3 -c 'import json,sys;print(\",\".join(t[\"name\"] for t in json.load(open(sys.argv[1]))[\"result\"][\"tools\"]))' '$WORK/last.json') == sys_info,screenshot,mouse,key ]]"
+check "tools/list = sys_info,screenshot,mouse,key,powershell" "[[ \$(python3 -c 'import json,sys;print(\",\".join(t[\"name\"] for t in json.load(open(sys.argv[1]))[\"result\"][\"tools\"]))' '$WORK/last.json') == sys_info,screenshot,mouse,key,powershell ]]"
 
 echo "== sys_info =="
 rpc tools/call '{"name":"sys_info","arguments":{}}'
@@ -158,6 +158,62 @@ out=$(callok mouse '{"action":"move","display":0,"x":99999,"y":1}'); check "poin
 out=$(callok key '{"action":"press","combo":"ctrl+nope"}'); check "unknown key is refused" "[[ '$out' == err*'unknown key'* ]]"
 ps1 windows/probe.ps1 -SetX "$sx" -SetY "$sy" >/dev/null
 rm -rf "$T"
+
+
+echo "== powershell =="
+# psh <args-json>: call the tool, print selected structured fields to $WORK/ps.txt
+psh() {
+  rpc tools/call "{\"name\":\"powershell\",\"arguments\":$1}"
+  python3 - "$WORK/last.json" <<'PY'
+import json,sys
+r=json.load(open(sys.argv[1]))
+if "error" in r: print("ERR", r["error"]["message"]); sys.exit()
+s=r["result"]["structuredContent"]
+print("exit", s["exit_code"], "timed_out", s["timed_out"], "pid_ok", s["pid"]>0,
+      "out_trunc", s["stdout_truncated"])
+print("STDOUT", s["stdout"].replace("\n","|").rstrip("|"))
+print("STDERR", s["stderr"].replace("\n","|").rstrip("|")[:120])
+PY
+}
+psh '{"command":"Write-Output \"中文輸出 ✓ 🎉\"; [Console]::Error.WriteLine(\"錯誤訊息\"); exit 3"}' > "$WORK/ps.txt"
+cat "$WORK/ps.txt"
+check "exit code is the command's (3)" "grep -q '^exit 3 timed_out False pid_ok True' '$WORK/ps.txt'"
+check "stdout is UTF-8 (CJK + emoji)" "grep -q 'STDOUT 中文輸出 ✓ 🎉' '$WORK/ps.txt'"
+check "stderr is plain text, not CLIXML" "grep -q 'STDERR 錯誤訊息' '$WORK/ps.txt' && ! grep -q CLIXML '$WORK/ps.txt'"
+
+psh '{"command":"Write-Progress -Activity x -Status y; Write-Output ok"}' > "$WORK/ps.txt"
+check "progress records do not leak to stderr" "grep -q 'STDOUT ok' '$WORK/ps.txt' && ! grep -q CLIXML '$WORK/ps.txt'"
+
+psh '{"command":"$env:FOO","env":{"FOO":"bar"}}' > "$WORK/ps.txt"
+check "env var passed through" "grep -q 'STDOUT bar' '$WORK/ps.txt'"
+
+psh '{"command":"(Get-Location).Path","cwd":"~"}' > "$WORK/ps.txt"
+check "cwd ~ expands to the user profile" "grep -qi 'STDOUT C:.Users' '$WORK/ps.txt'"
+out=$(psh '{"command":"x","cwd":"C:\\no\\such\\dir"}' | head -1)
+check "missing cwd is a clear error" "[[ '$out' == ERR*'not a directory'* ]]"
+
+psh '{"command":"Start-Sleep 30","timeout_secs":2}' > "$WORK/ps.txt"
+check "timeout kills it: exit 137, timed_out=true" "grep -q '^exit 137 timed_out True' '$WORK/ps.txt'"
+
+# A process the command starts must survive the call finishing (no KILL_ON_JOB_CLOSE),
+# like macOS (launchd) and Linux (KillMode=process). This cannot be observed when the
+# node is launched directly from WSL: WSL interop puts the node in its own
+# kill-on-close job, and a detached child dies with the parent powershell regardless of
+# our job. It is verified by spike 3 on native Windows (poc/windows-spike) and is a
+# ticket-15 manual-acceptance item under a Scheduled Task. The negative control we CAN
+# check here: our job does NOT set KILL_ON_JOB_CLOSE (the command still returns).
+psh '{"command":"Start-Process -WindowStyle Hidden powershell -ArgumentList \"-NoProfile\",\"-Command\",\"Start-Sleep 5\"; Write-Output launched"}' > "$WORK/ps.txt"
+check "a command that starts a detached process returns cleanly" "grep -q 'STDOUT launched' '$WORK/ps.txt' && grep -q '^exit 0 ' '$WORK/ps.txt'"
+
+# A survivor holding stdout must not hang the call past the drain cap.
+start=$(date +%s)
+psh '{"command":"Start-Process -NoNewWindow ping -ArgumentList \"-n\",\"8\",\"127.0.0.1\"; Write-Output started"}' > "$WORK/ps.txt"
+el=$(( $(date +%s) - start ))
+check "pipe held by a survivor is bounded (<6 s)" "(( el < 6 ))"
+check "output was collected despite the survivor (drain was not lost)" "grep -q 'started' '$WORK/ps.txt'"
+
+out=$(psh "{\"command\":\"$(python3 -c 'print("x"*32001)')\"}" | head -1)
+check "an over-long command is refused" "[[ '$out' == ERR*'too long'* ]]"
 
 echo "== profiles over the attach plane are unchanged (forced call) =="
 rpc tools/call '{"name":"bash","arguments":{"command":"x"}}'
