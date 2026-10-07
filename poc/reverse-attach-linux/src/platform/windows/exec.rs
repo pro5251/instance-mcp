@@ -17,7 +17,7 @@ fn clamp_u64(args: &Value, key: &str, default: u64, lo: u64, hi: u64) -> u64 {
 }
 
 /// Expand a leading `~` to `%USERPROFILE%` and require the directory to exist.
-fn resolve_cwd(raw: &str) -> Result<String, String> {
+pub(crate) fn resolve_cwd(raw: &str) -> Result<String, String> {
     let path = if let Some(rest) = raw.strip_prefix('~') {
         let home =
             std::env::var("USERPROFILE").map_err(|_| "USERPROFILE is not set".to_string())?;

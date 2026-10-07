@@ -8,6 +8,7 @@
 //! stream comes back as CLIXML and its length ceiling is far lower.
 
 use std::io::Read;
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
 use std::time::{Duration, Instant};
 
@@ -184,38 +185,35 @@ fn drain(read: OwnedHandle, cap: usize) -> std::thread::JoinHandle<(Vec<u8>, boo
 }
 
 /// A created-suspended PowerShell in its own job, ready to resume.
-pub(crate) struct Spawned {
-    // Field (= drop) order matters: the job handle must close LAST. A Job Object with
-    // no KILL_ON_JOB_CLOSE keeps its surviving processes alive after its last handle
-    // closes, but only once the process/thread handles are gone first; closing the job
-    // handle while the dead parent's handles are still open takes the children with it
-    // (observed on Windows 11; spike 3 closed the job last too).
-    out_read: Option<OwnedHandle>,
-    err_read: Option<OwnedHandle>,
-    process: OwnedHandle,
+pub(crate) struct Child {
+    // Drop order matters: the job handle closes LAST. A job with no KILL_ON_JOB_CLOSE
+    // keeps its surviving processes alive after its last handle closes, but only once
+    // the process/thread handles are gone first; closing the job handle while the dead
+    // parent's handles are still open takes the children with it (Windows 11; spike 3
+    // closed the job last too).
+    pub(crate) process: OwnedHandle,
     thread: OwnedHandle,
-    job: OwnedHandle,
+    pub(crate) job: OwnedHandle,
     pub(crate) pid: u32,
 }
 
-/// Create (suspended), assign to a fresh job, but do not resume yet.
-pub(crate) fn spawn(
-    command: &str,
-    cwd: Option<&str>,
-    extra_env: &serde_json::Value,
-) -> Result<Spawned, String> {
-    let out = make_pipe()?;
-    let err = make_pipe()?;
+/// A sync run keeps the pipe read ends to drain in-process.
+pub(crate) struct Spawned {
+    out_read: Option<OwnedHandle>,
+    err_read: Option<OwnedHandle>,
+    child: Child,
+}
 
+fn new_job() -> Result<OwnedHandle, String> {
     // SAFETY: CreateJobObjectW with null attrs/name returns an owned handle or null.
     let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     if job.is_null() {
         return Err(format!("CreateJobObject failed ({})", last_error()));
     }
     let job = unsafe { OwnedHandle::from_raw_handle(job as _) };
-    // No KILL_ON_JOB_CLOSE: a GUI app the command starts must survive this call ending,
-    // as on macOS (launchd) and Linux (KillMode=process). We kill the tree explicitly
-    // on timeout instead.
+    // No KILL_ON_JOB_CLOSE: a GUI app the command starts must survive the command ending,
+    // as on macOS (launchd) and Linux (KillMode=process); the tree is killed explicitly
+    // on timeout/cancel instead.
     let info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
     // SAFETY: info is a valid, fully-initialised struct of the given class/size.
     if unsafe {
@@ -229,7 +227,19 @@ pub(crate) fn spawn(
     {
         return Err(format!("SetInformationJobObject failed ({})", last_error()));
     }
+    Ok(job)
+}
 
+/// Create PowerShell suspended with the given inheritable stdout/stderr write handles,
+/// in a fresh job, resumed is left to the caller.
+fn create_suspended(
+    command: &str,
+    cwd: Option<&str>,
+    extra_env: &serde_json::Value,
+    stdout_w: HANDLE,
+    stderr_w: HANDLE,
+) -> Result<Child, String> {
+    let job = new_job()?;
     let mut cmdline: Vec<u16> = command_line(command)
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -242,12 +252,12 @@ pub(crate) fn spawn(
     si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdInput = INVALID_HANDLE_VALUE;
-    si.hStdOutput = raw(&out.write);
-    si.hStdError = raw(&err.write);
+    si.hStdOutput = stdout_w;
+    si.hStdError = stderr_w;
     let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
 
-    // SAFETY: all pointers are to live, correctly-sized buffers; bInheritHandles=true so
-    // the child gets the inheritable write ends of the pipes.
+    // SAFETY: live, correctly-sized buffers; bInheritHandles=true so the child gets the
+    // inheritable write handles.
     let ok = unsafe {
         CreateProcessW(
             std::ptr::null(),
@@ -282,20 +292,53 @@ pub(crate) fn spawn(
             last_error()
         ));
     }
+    Ok(Child {
+        process,
+        thread,
+        job,
+        pid: pi.dwProcessId,
+    })
+}
 
+/// Resume a suspended child.
+pub(crate) fn resume(child: &Child) {
+    // SAFETY: a valid suspended thread handle.
+    unsafe { ResumeThread(raw(&child.thread)) };
+}
+
+/// Create (suspended) for a synchronous run, with pipes we drain in-process.
+pub(crate) fn spawn(
+    command: &str,
+    cwd: Option<&str>,
+    extra_env: &serde_json::Value,
+) -> Result<Spawned, String> {
+    let out = make_pipe()?;
+    let err = make_pipe()?;
+    let child = create_suspended(command, cwd, extra_env, raw(&out.write), raw(&err.write))?;
     // Drop our copies of the write ends, so EOF arrives when the child (and any survivor
     // holding them) closes them.
     drop(out.write);
     drop(err.write);
-
     Ok(Spawned {
-        job,
-        process,
-        thread,
         out_read: Some(out.read),
         err_read: Some(err.read),
-        pid: pi.dwProcessId,
+        child,
     })
+}
+
+/// Create (suspended) for a background job, with stdout/stderr going straight to files
+/// (the source of truth exec_poll reads by offset, like the macOS job logs). Not resumed.
+pub(crate) fn spawn_to_files(
+    command: &str,
+    cwd: Option<&str>,
+    extra_env: &serde_json::Value,
+    out_path: &std::path::Path,
+    err_path: &std::path::Path,
+) -> Result<Child, String> {
+    let out = create_inheritable_file(out_path)?;
+    let err = create_inheritable_file(err_path)?;
+    create_suspended(command, cwd, extra_env, raw(&out), raw(&err))
+    // out/err write handles drop here; the child holds its own inherited copies.
 }
 
 /// Resume, wait up to `timeout`, drain both pipes (bounded), and report. On timeout the
@@ -310,40 +353,122 @@ pub(crate) fn run(mut sp: Spawned, timeout: Duration, cap: usize) -> Outcome {
     let out_t = drain(out_read, cap);
     let err_t = drain(err_read, cap);
 
-    // SAFETY: a valid suspended thread handle.
-    unsafe { ResumeThread(raw(&sp.thread)) };
+    resume(&sp.child);
 
     let ms = timeout.as_millis().min(u32::MAX as u128) as u32;
     // SAFETY: a valid process handle.
-    let waited = unsafe { WaitForSingleObject(raw(&sp.process), ms) };
+    let waited = unsafe { WaitForSingleObject(raw(&sp.child.process), ms) };
     let timed_out = waited == WAIT_TIMEOUT;
     if timed_out {
-        // SAFETY: a valid job handle; kills the whole tree.
-        unsafe { TerminateJobObject(raw(&sp.job), 137) };
-        // SAFETY: wait for the forced exit so the code is final.
-        unsafe { WaitForSingleObject(raw(&sp.process), 5000) };
+        terminate(&sp.child, 137);
     }
-
-    let mut code: u32 = 0;
-    // SAFETY: out-pointer to a local.
-    unsafe { GetExitCodeProcess(raw(&sp.process), &mut code) };
+    let code = exit_code_of(&sp.child.process);
 
     // Bound the drain: a surviving grandchild can hold the write end open after the
     // command returned. Wait, then cancel the blocked reads.
     let (stdout, stdout_truncated, stderr, stderr_truncated) =
         join_bounded(out_t, err_t, out_raw, err_raw, Duration::from_secs(2));
 
-    let exit_code = if timed_out { 137 } else { code as i32 };
     Outcome {
-        exit_code,
+        exit_code: if timed_out { 137 } else { code },
         timed_out,
         stdout,
         stderr,
         stdout_truncated,
         stderr_truncated,
         duration_ms: started.elapsed().as_millis() as u64,
-        pid: sp.pid,
+        pid: sp.child.pid,
     }
+}
+
+/// Best-effort graceful stop (there is no SIGTERM on Windows): post WM_CLOSE to any
+/// top-level windows the job's root process owns, then wait up to `grace` for it to
+/// exit. A console-less PowerShell has no window, so this usually returns false and the
+/// caller forces termination. Returns true only if the tree exited on its own.
+pub(crate) fn try_graceful_stop(child: &Child, grace: Duration) -> bool {
+    use windows_sys::Win32::Foundation::{BOOL, LPARAM};
+    use windows_sys::Win32::System::Threading::GetProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
+    };
+    // SAFETY: a valid process handle.
+    let pid = unsafe { GetProcessId(raw(&child.process)) };
+    unsafe extern "system" fn close_if_pid(
+        hwnd: windows_sys::Win32::Foundation::HWND,
+        want: LPARAM,
+    ) -> BOOL {
+        let mut wpid = 0u32;
+        // SAFETY: out-pointer to a local.
+        unsafe { GetWindowThreadProcessId(hwnd, &mut wpid) };
+        if wpid == want as u32 {
+            // SAFETY: posting a documented message to a window handle.
+            unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+        }
+        1
+    }
+    // SAFETY: the callback only reads the LPARAM and posts messages.
+    unsafe { EnumWindows(Some(close_if_pid), pid as LPARAM) };
+    wait(child, grace.as_millis().min(u32::MAX as u128) as u32)
+}
+
+/// Wait up to `ms` for the process to exit; true if it did.
+pub(crate) fn wait(child: &Child, ms: u32) -> bool {
+    // SAFETY: a valid process handle.
+    unsafe { WaitForSingleObject(raw(&child.process), ms) != WAIT_TIMEOUT }
+}
+
+/// Kill the whole tree with the given exit code, then wait for it to settle.
+pub(crate) fn terminate(child: &Child, code: u32) {
+    // SAFETY: a valid job handle; kills the whole tree.
+    unsafe { TerminateJobObject(raw(&child.job), code) };
+    // SAFETY: wait for the forced exit so the code is final.
+    unsafe { WaitForSingleObject(raw(&child.process), 5000) };
+}
+
+pub(crate) fn exit_code_of(process: &OwnedHandle) -> i32 {
+    let mut code: u32 = 0;
+    // SAFETY: out-pointer to a local.
+    unsafe { GetExitCodeProcess(raw(process), &mut code) };
+    code as i32
+}
+
+/// Create a file for writing whose handle the child may inherit (stdout/stderr target).
+fn create_inheritable_file(path: &std::path::Path) -> Result<OwnedHandle, String> {
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, CREATE_ALWAYS, FILE_GENERIC_WRITE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: std::ptr::null_mut(),
+        bInheritHandle: 1,
+    };
+    // SAFETY: wide is NUL-terminated; sa is valid for the call.
+    let h = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            &sa,
+            CREATE_ALWAYS,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    if h == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "cannot create {}: {}",
+            path.display(),
+            last_error()
+        ));
+    }
+    // SAFETY: a fresh valid handle, owned from here.
+    Ok(unsafe { OwnedHandle::from_raw_handle(h as _) })
 }
 
 fn join_bounded(

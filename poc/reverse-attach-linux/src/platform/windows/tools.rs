@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use super::capture::tool_screenshot;
 use super::exec;
 use super::input::{tool_key, tool_mouse};
+use super::jobs;
 use super::sysinfo::tool_sys_info;
 use crate::mcp::ToolClass;
 use crate::tools::LocalTool;
@@ -40,7 +41,97 @@ pub(crate) static LOCAL_TOOLS: &[LocalTool] = &[
         listing: exec::listing,
         call: exec::tool_powershell,
     },
+    LocalTool {
+        name: "exec_start",
+        class: ToolClass::Shell,
+        listing: exec_start_listing,
+        call: jobs::tool_exec_start,
+    },
+    LocalTool {
+        name: "exec_poll",
+        class: ToolClass::Observe,
+        listing: exec_poll_listing,
+        call: jobs::tool_exec_poll,
+    },
+    LocalTool {
+        name: "exec_list",
+        class: ToolClass::Observe,
+        listing: exec_list_listing,
+        call: jobs::tool_exec_list,
+    },
+    LocalTool {
+        name: "exec_cancel",
+        class: ToolClass::Act,
+        listing: exec_cancel_listing,
+        call: jobs::tool_exec_cancel,
+    },
 ];
+
+fn exec_start_listing() -> Value {
+    json!({
+        "name": "exec_start",
+        "description": "Start a PowerShell command in the background and return a job_id immediately, \
+                        for work that outlives one request. Poll it with exec_poll, stop it with \
+                        exec_cancel. Same shell/session as powershell. timeout_secs 0 = no timeout.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": { "type": "string" },
+                "cwd": { "type": "string", "description": "leading ~ expands to %USERPROFILE%" },
+                "timeout_secs": { "type": "integer", "description": "0 = no timeout (stop via exec_cancel). Default 0." },
+                "env": { "type": "object", "additionalProperties": { "type": "string" } }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn exec_poll_listing() -> Value {
+    json!({
+        "name": "exec_poll",
+        "description": "Fetch a background job's state and output since your last poll. Pass job_id and, \
+                        for only-new output, the stdout_since/stderr_since byte offsets from the previous \
+                        poll. Terminal state (exited/killed) carries exit_code.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_id": { "type": "string" },
+                "stdout_since": { "type": "integer" },
+                "stderr_since": { "type": "integer" }
+            },
+            "required": ["job_id"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn exec_list_listing() -> Value {
+    json!({
+        "name": "exec_list",
+        "description": "List background jobs: all running plus the 10 most recently finished, each with \
+                        job_id, state, pid, exit_code, command, cwd, timestamps and current stdout/stderr sizes.",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+    })
+}
+
+fn exec_cancel_listing() -> Value {
+    json!({
+        "name": "exec_cancel",
+        "description": "Stop a running job (or drop a finished one). signal KILL (default, immediate, exit \
+                        137) or TERM (best-effort WM_CLOSE, then forced after 5 s, exit 143). Poll once more \
+                        for final output.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job_id": { "type": "string" },
+                "signal": { "type": "string", "enum": ["KILL", "TERM"] }
+            },
+            "required": ["job_id"],
+            "additionalProperties": false
+        }
+    })
+}
 
 fn mouse_listing() -> Value {
     json!({

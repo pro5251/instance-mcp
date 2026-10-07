@@ -5,6 +5,7 @@ mod capture;
 mod desk;
 mod exec;
 mod input;
+mod jobs;
 pub(crate) mod private_fs;
 mod proc;
 mod sysinfo;
