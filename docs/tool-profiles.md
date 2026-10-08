@@ -68,6 +68,23 @@ Lists taken on 2026-09-30 from the live `tools/list` of macmini (instance-mcp, m
 
 Linux has no `osascript`. `bash` is the counterpart of macOS `exec*`.
 
+#### Windows (POC) — owner
+
+| Category | Tools |
+|---|---|
+| System | `sys_info` |
+| Shell | `powershell`, `exec_start`, `exec_poll`, `exec_list`, `exec_cancel` |
+| Screen / input | `screenshot`, `mouse`, `key` |
+| Browser | the same `browser_*` as macOS/Linux, when a Playwright upstream is configured |
+
+Windows has no `osascript`; `powershell` is the counterpart of macOS `exec`, and
+`exec_start`/`exec_poll`/`exec_list`/`exec_cancel` are the background-job family (as on
+macOS). Boundary classes match: `powershell`/`exec_start` are `shell`, `exec_poll`/
+`exec_list` are `observe`, `exec_cancel` is `act`. Unlike macOS (which hides `exec*` under
+`desktop`), Windows keeps the shell tools under `desktop`, like Linux keeps `bash` — the
+GUI is a shell either way (instance-mcp#45). POC names are pending the author's
+confirmation; the tool names are the functional contract and do not change.
+
 ### `desktop`
 
 #### macOS — 20 tools

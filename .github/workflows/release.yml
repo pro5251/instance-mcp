@@ -234,3 +234,50 @@ jobs:
           }
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
             "$ASSET" "$ASSET.sha256"
+
+  windows:
+    name: Windows hands node ZIP (POC, x64)
+    # Same approval gate as the other jobs.
+    environment: release
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (static CRT)
+        working-directory: poc/reverse-attach-linux
+        run: cargo build --release
+      - name: Package
+        shell: pwsh
+        working-directory: poc/reverse-attach-linux
+        run: |
+          $ver = "${env:RELEASE_TAG}" -replace '^v',''
+          $name = "oab-imcp-winpoc-$ver-windows-amd64"
+          New-Item -ItemType Directory -Force $name | Out-Null
+          Copy-Item target/release/reverse-attach.exe "$name/oab-imcp-winpoc.exe"
+          Copy-Item windows/install-winpoc.ps1,windows/pw-mcp.ps1 $name/
+          Copy-Item README.md "$name/README.md"
+          Compress-Archive -Path "$name/*" -DestinationPath "$name.zip" -Force
+          (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" |
+            Set-Content "$name.zip.sha256"
+          "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+      - name: Upload to the release
+        shell: bash
+        working-directory: poc/reverse-attach-linux
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            sleep 30
+          done
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null || {
+            echo "release $RELEASE_TAG does not exist after 30 min; did the macOS job fail or get rejected?" >&2
+            exit 1
+          }
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$ASSET" "$ASSET.sha256"
