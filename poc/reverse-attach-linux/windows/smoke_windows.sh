@@ -270,5 +270,14 @@ echo "== profiles over the attach plane are unchanged (forced call) =="
 rpc tools/call '{"name":"bash","arguments":{"command":"x"}}'
 check "unknown tool on Windows" "grep -q 'unknown tool: bash' '$WORK/last.json'"
 
+echo "== --menu-bar: tray does not block HTTP (menu interaction is manual, ticket 15) =="
+cmd.exe /c "taskkill /im oab-imcp-winpoc.exe /f" >/dev/null 2>&1; sleep 0.5
+(cd "$WIN_DIR" && ./oab-imcp-winpoc.exe --insecure-local --menu-bar --public-url "https://localhost:8445/mcp" > "$WORK/tray.log" 2>&1 &)
+sleep 1.5
+check "node with --menu-bar is healthy" "[[ \$(curl.exe -s -m 3 http://127.0.0.1:$PORT/healthz | tr -d '\r') == ok ]]"
+rpc tools/list
+check "serves tools with the tray running" "[[ \$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))[\"result\"][\"tools\"]))' '$WORK/last.json') == 9 ]]"
+check "the tray started without error" "! grep -qi 'tray: could not' '$WORK/tray.log'"
+
 echo "RESULT: $pass passed, $fail failed"
 [[ $fail -eq 0 ]]

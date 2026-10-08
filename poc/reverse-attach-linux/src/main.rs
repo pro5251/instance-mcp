@@ -34,6 +34,10 @@ fn main() {
         }
     }
     platform::warm_up();
+    #[cfg(windows)]
+    if cli::options().menu_bar {
+        platform::windows_start_tray();
+    }
     if let Some((url, secret_file, profile)) = cli::options().switchboard.clone() {
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         std::thread::spawn(move || switchboard::run(url, secret_file, profile, cancelled));

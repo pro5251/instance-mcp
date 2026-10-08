@@ -10,6 +10,7 @@ pub(crate) mod private_fs;
 mod proc;
 mod sysinfo;
 mod tools;
+pub(crate) mod tray;
 
 pub(crate) use tools::LOCAL_TOOLS;
 

@@ -27,6 +27,7 @@ pub(crate) struct Flags {
     no_attach: bool,
     no_grant_persistence: bool,
     public_url: Option<String>,
+    menu_bar: bool,
     switchboard: Option<String>,
     switchboard_secret_file: Option<String>,
     switchboard_profile: String,
@@ -37,6 +38,11 @@ pub(crate) struct Flags {
 pub(crate) struct Options {
     pub(crate) mcp_path: String,
     pub(crate) attach: bool,
+    // Read only by the Windows tray; kept on all platforms so the flag parses everywhere.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) menu_bar: bool,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) public_url: Option<String>,
     /// (url, secret_file, profile) when switchboard mode is on.
     pub(crate) switchboard: Option<(String, String, String)>,
 }
@@ -47,6 +53,8 @@ pub(crate) fn options() -> &'static Options {
     OPTIONS.get_or_init(|| Options {
         mcp_path: "/mcp".to_string(),
         attach: true,
+        menu_bar: false,
+        public_url: None,
         switchboard: None,
     })
 }
@@ -55,7 +63,7 @@ pub(crate) const USAGE: &str = "\
 USAGE: oab-instance-mcp [--host 127.0.0.1] [--port 8790] [--path /mcp]
                         [--allow-login <email>]... [--token <str> | --token-file <path>]
                         [--insecure-local] [--upstream <name=url>]...
-                        [--no-attach] [--no-grant-persistence] [--public-url <https://…/mcp>]
+                        [--no-attach] [--no-grant-persistence] [--public-url <https://…/mcp>] [--menu-bar]
                         [--switchboard <wss://host/vm/attach> --switchboard-secret-file <path>
                          [--switchboard-profile observe|desktop|owner]]
                         [--version] [--help]
@@ -107,6 +115,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation, String> {
             "--no-attach" => flags.no_attach = true,
             "--no-grant-persistence" => flags.no_grant_persistence = true,
             "--public-url" => flags.public_url = Some(value(arg)?),
+            "--menu-bar" => flags.menu_bar = true,
             "--switchboard" => {
                 let v = value(arg)?;
                 flags.switchboard = Some(crate::switchboard::validate_url(&v)?);
@@ -203,6 +212,8 @@ impl Flags {
         let _ = OPTIONS.set(Options {
             mcp_path: self.path.clone().unwrap_or_else(|| "/mcp".to_string()),
             attach: !self.no_attach,
+            menu_bar: self.menu_bar,
+            public_url: self.public_url.clone(),
             switchboard,
         });
         if let Some(url) = &self.public_url {
