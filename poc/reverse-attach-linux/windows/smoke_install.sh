@@ -22,7 +22,7 @@ inst -Uninstall -Purge >/dev/null 2>&1
 
 echo "== install =="
 out=$(inst -Install -Token "$TOKEN" -Port $PORT -SkipTailscale)
-check "installer reports healthy" "[[ '$out' == *'healthy on http'* ]]"
+check "installer reports ready with the MCP URL" "[[ '$out' == *'MCP URL'* && '$out' == *'======'* ]]"
 check "the Scheduled Task exists" "[[ '$(psc "(Get-ScheduledTask -TaskName oab-imcp-winpoc -TaskPath '\\OpenAB-POC\\').State")' == Ready || '$(psc "(Get-ScheduledTask -TaskName oab-imcp-winpoc -TaskPath '\\OpenAB-POC\\').State")' == Running ]]"
 printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' > "$WIN_DIR/req.json"
 n=$(curl.exe -s -m 5 -X POST "http://127.0.0.1:$PORT/mcp" -H "Authorization: Bearer $TOKEN" --data-binary @"$(wslpath -w "$WIN_DIR/req.json")" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)["result"]["tools"]))' 2>/dev/null)

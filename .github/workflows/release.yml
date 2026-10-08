@@ -260,8 +260,8 @@ jobs:
           $name = "oab-imcp-winpoc-$ver-windows-amd64"
           New-Item -ItemType Directory -Force $name | Out-Null
           Copy-Item target/release/reverse-attach.exe "$name/oab-imcp-winpoc.exe"
-          Copy-Item windows/install-winpoc.ps1,windows/pw-mcp.ps1 $name/
-          Copy-Item README.md "$name/README.md"
+          Copy-Item windows/install-winpoc.ps1,windows/install.cmd,windows/uninstall.cmd,windows/pw-mcp.ps1 $name/
+          Copy-Item windows/README.md "$name/README.md"
           Compress-Archive -Path "$name/*" -DestinationPath "$name.zip" -Force
           (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" |
             Set-Content "$name.zip.sha256"

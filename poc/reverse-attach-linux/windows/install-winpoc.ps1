@@ -78,12 +78,25 @@ function Do-Install {
     Start-Sleep -Milliseconds 300
   }
   if (-not $ok) { throw "node did not become healthy; see $LogDir" }
-  Write-Host "healthy on http://127.0.0.1:$Port/mcp"
+  $serveUrl = "http://127.0.0.1:$Port/mcp"
   if (-not $SkipTailscale) {
     $ts = Get-Command tailscale.exe -ErrorAction SilentlyContinue
-    if ($ts) { & $ts.Source serve --bg --https=$ServePort "http://127.0.0.1:$Port" | Out-Null; Write-Host "tailscale serve on :$ServePort" }
-    else { Write-Host "note: Tailscale not found; install it and run: tailscale serve --bg --https=$ServePort http://127.0.0.1:$Port" }
+    if ($ts) {
+      & $ts.Source serve --bg --https=$ServePort "http://127.0.0.1:$Port" | Out-Null
+      $dns = (& $ts.Source status --json 2>$null | ConvertFrom-Json).Self.DNSName.TrimEnd('.')
+      if ($dns) { $serveUrl = "https://${dns}:$ServePort/mcp" }
+    } else {
+      Write-Host "note: Tailscale not found; for remote access install it, then run:"
+      Write-Host "      tailscale serve --bg --https=$ServePort http://127.0.0.1:$Port"
+    }
   }
+  Write-Host ""
+  Write-Host "================ ready ================"
+  Write-Host "  MCP URL : $serveUrl"
+  if (Test-Path $TokenF) { Write-Host "  token   : $(Get-Content -Raw $TokenF)  (also at $TokenF)" }
+  elseif ($AllowLogin)   { Write-Host "  auth    : Tailscale login $AllowLogin" }
+  Write-Host "  autostart: logon task $TaskName (runs now and every sign-in)"
+  Write-Host "======================================"
 }
 
 function Do-Uninstall {
