@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 /// What the command line asks for.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Invocation {
-    Run(Flags),
+    Run(Box<Flags>),
     Version,
     Help,
 }
@@ -27,6 +27,9 @@ pub(crate) struct Flags {
     no_attach: bool,
     no_grant_persistence: bool,
     public_url: Option<String>,
+    switchboard: Option<String>,
+    switchboard_secret_file: Option<String>,
+    switchboard_profile: String,
 }
 
 /// Options that have no environment variable; read by the HTTP server.
@@ -34,6 +37,8 @@ pub(crate) struct Flags {
 pub(crate) struct Options {
     pub(crate) mcp_path: String,
     pub(crate) attach: bool,
+    /// (url, secret_file, profile) when switchboard mode is on.
+    pub(crate) switchboard: Option<(String, String, String)>,
 }
 
 static OPTIONS: OnceLock<Options> = OnceLock::new();
@@ -42,6 +47,7 @@ pub(crate) fn options() -> &'static Options {
     OPTIONS.get_or_init(|| Options {
         mcp_path: "/mcp".to_string(),
         attach: true,
+        switchboard: None,
     })
 }
 
@@ -50,6 +56,8 @@ USAGE: oab-instance-mcp [--host 127.0.0.1] [--port 8790] [--path /mcp]
                         [--allow-login <email>]... [--token <str> | --token-file <path>]
                         [--insecure-local] [--upstream <name=url>]...
                         [--no-attach] [--no-grant-persistence] [--public-url <https://…/mcp>]
+                        [--switchboard <wss://host/vm/attach> --switchboard-secret-file <path>
+                         [--switchboard-profile observe|desktop|owner]]
                         [--version] [--help]
 
 Every flag also has an environment variable (BIND, MCP_ALLOW_LOGIN, MCP_TOKEN,
@@ -99,6 +107,20 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation, String> {
             "--no-attach" => flags.no_attach = true,
             "--no-grant-persistence" => flags.no_grant_persistence = true,
             "--public-url" => flags.public_url = Some(value(arg)?),
+            "--switchboard" => {
+                let v = value(arg)?;
+                flags.switchboard = Some(crate::switchboard::validate_url(&v)?);
+            }
+            "--switchboard-secret-file" => flags.switchboard_secret_file = Some(value(arg)?),
+            "--switchboard-profile" => {
+                let v = value(arg)?;
+                if crate::mcp::normalize_profile(&v).is_none() {
+                    return Err(format!(
+                        "--switchboard-profile wants owner, desktop or observe, got {v}"
+                    ));
+                }
+                flags.switchboard_profile = v;
+            }
             "--version" => return Ok(Invocation::Version),
             "-h" | "--help" => return Ok(Invocation::Help),
             other => return Err(format!("unknown flag {other}")),
@@ -107,7 +129,13 @@ pub(crate) fn parse(args: &[String]) -> Result<Invocation, String> {
     if flags.token.is_some() && flags.token_file.is_some() {
         return Err("give --token or --token-file, not both".to_string());
     }
-    Ok(Invocation::Run(flags))
+    if flags.switchboard.is_some() && flags.switchboard_secret_file.is_none() {
+        return Err("--switchboard needs --switchboard-secret-file".to_string());
+    }
+    if flags.switchboard.is_none() && flags.switchboard_secret_file.is_some() {
+        return Err("--switchboard-secret-file needs --switchboard".to_string());
+    }
+    Ok(Invocation::Run(Box::new(flags)))
 }
 
 impl Flags {
@@ -160,9 +188,22 @@ impl Flags {
         for (name, value) in self.env_overrides(bind.as_deref()) {
             std::env::set_var(name, value);
         }
+        let switchboard = self.switchboard.as_ref().map(|url| {
+            let profile = if self.switchboard_profile.is_empty() {
+                "observe".to_string()
+            } else {
+                self.switchboard_profile.clone()
+            };
+            (
+                url.clone(),
+                self.switchboard_secret_file.clone().unwrap_or_default(),
+                profile,
+            )
+        });
         let _ = OPTIONS.set(Options {
             mcp_path: self.path.clone().unwrap_or_else(|| "/mcp".to_string()),
             attach: !self.no_attach,
+            switchboard,
         });
         if let Some(url) = &self.public_url {
             eprintln!("public url: {url}");
@@ -180,7 +221,7 @@ mod tests {
 
     fn run(list: &[&str]) -> Flags {
         match parse(&args(list)).expect("parses") {
-            Invocation::Run(f) => f,
+            Invocation::Run(f) => *f,
             other => panic!("expected Run, got {other:?}"),
         }
     }

@@ -1,0 +1,30 @@
+{
+  "_comment": "openab-sb southbound contract: URL rule (Swift Switchboard.validate) + reconnect table (SOUTHBOUND-CONTRACT.md 5) + handshake (2). Shared oracle for Rust (and Swift, if it adopts these).",
+  "validate_url": [
+    { "input": "wss://sb.example.ts.net/vm/attach", "ok": true },
+    { "input": "wss://sb.example.ts.net:8443/vm/attach", "ok": true },
+    { "input": "ws://127.0.0.1:9000/vm/attach", "ok": true },
+    { "input": "ws://localhost/vm/attach", "ok": true },
+    { "input": "wss://sb.example.ts.net/base/vm/attach", "ok": true },
+    { "input": "ws://sb.example.ts.net/vm/attach", "ok": false },
+    { "input": "wss://sb.example.ts.net/vm/other", "ok": false },
+    { "input": "https://sb.example.ts.net/vm/attach", "ok": false },
+    { "input": "wss:///vm/attach", "ok": false },
+    { "input": "not a url", "ok": false }
+  ],
+  "close": [
+    { "code": 4002, "stop": true },
+    { "code": 4003, "stop": true },
+    { "code": 4005, "stop": false },
+    { "code": 1001, "stop": false },
+    { "code": 1000, "stop": false },
+    { "code": 1006, "stop": false }
+  ],
+  "handshake": [
+    { "status": 101, "disposition": "attached" },
+    { "status": 401, "disposition": "retry_slow" },
+    { "status": 403, "disposition": "redial" },
+    { "status": 502, "disposition": "redial" },
+    { "status": 503, "disposition": "redial" }
+  ]
+}

@@ -278,6 +278,12 @@ pub(crate) fn upstream_owning(name: &str, profile: &str) -> Option<Arc<Upstream>
 // ---------------------------------------------------------------------------
 
 pub(crate) fn answer(text: &str, profile: &str) -> Option<String> {
+    answer_with(text, profile, crate::platform::SERVER_INSTRUCTIONS)
+}
+
+/// Like `answer`, but with an explicit initialize `instructions` string (switchboard mode
+/// prepends its own; reverse attach and direct `/mcp` pass the platform default).
+pub(crate) fn answer_with(text: &str, profile: &str, instructions: Option<&str>) -> Option<String> {
     let req: Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(_) => return None,
@@ -299,7 +305,7 @@ pub(crate) fn answer(text: &str, profile: &str) -> Option<String> {
                     "version": crate::platform::SERVER_VERSION
                 }
             });
-            if let Some(text) = crate::platform::SERVER_INSTRUCTIONS {
+            if let Some(text) = instructions {
                 result["instructions"] = json!(text);
             }
             Ok(result)

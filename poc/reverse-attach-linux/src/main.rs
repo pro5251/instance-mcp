@@ -12,6 +12,7 @@ mod cli;
 mod http;
 mod mcp;
 mod platform;
+mod switchboard;
 mod tools;
 
 fn main() {
@@ -33,5 +34,9 @@ fn main() {
         }
     }
     platform::warm_up();
+    if let Some((url, secret_file, profile)) = cli::options().switchboard.clone() {
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        std::thread::spawn(move || switchboard::run(url, secret_file, profile, cancelled));
+    }
     http::serve();
 }
