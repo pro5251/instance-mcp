@@ -360,8 +360,9 @@ impl UsLayout {
         }
         // Let the target finish processing the layout change before we type, or the
         // first few characters can still go through the old IME (seen as an occasional
-        // flake right after the window gains focus).
-        thread::sleep(Duration::from_millis(60));
+        // flake right after the window gains focus). The change is posted, not sent, so
+        // give the target's input thread time to pump it.
+        thread::sleep(Duration::from_millis(250));
         Some(Self {
             window,
             thread,

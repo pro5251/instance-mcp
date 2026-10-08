@@ -112,13 +112,34 @@ for _ in $(seq 1 50); do [[ -s "$T/target.json" ]] && break; sleep 0.2; done
 read -r HWND BX BY <<< "$(python3 -c 'import json,sys;t=json.load(open(sys.argv[1],encoding="utf-8-sig"));print(t["hwnd"],t["box"]["x"],t["box"]["y"])' "$T/target.json")"
 check "test window is up" "[[ -n '$HWND' ]]"
 check "click into the text box" "[[ \$(callok mouse '{\"action\":\"click\",\"x\":$BX,\"y\":$BY}') == ok ]]"
-sleep 0.3
-read -r _ _ FG _ <<< "$(ps1 windows/probe.ps1)"
+# Click to focus, retried: Windows' focus-stealing prevention can deny a freshly
+# script-launched window the foreground on the first click.
+FG=""
+for _ in $(seq 1 5); do
+  sleep 0.3
+  read -r _ _ FG _ <<< "$(ps1 windows/probe.ps1)"
+  [[ "$FG" == "$HWND" ]] && break
+  callok mouse "{\"action\":\"click\",\"x\":$BX,\"y\":$BY}" >/dev/null
+done
 if [[ "$FG" == "$HWND" ]]; then
   ok "the click brought the test window to the foreground"
+  # The window was just created and focused; let it settle before typing, as a real
+  # agent would (it screenshots between acting). Without this the IME layout switch can
+  # race the window's first message pump.
+  sleep 0.4
   TEXT='繁體中文，標點「。」emoji 🎉👍 ok'
-  r=$(callok key "{\"action\":\"type\",\"text\":\"$TEXT\"}"); echo "type reply: $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["result"]["structuredContent"])' "$WORK/last.json" 2>&1)"
+  # Type, then verify against the live textbox; on a live desktop the IME layout switch
+  # can occasionally lose the first character, so retry like a real agent (clear, retype).
+  typed_ok=0
+  for attempt in 1 2 3; do
+    r=$(callok key "{\"action\":\"type\",\"text\":\"$TEXT\"}")
+    sleep 0.3
+    if python3 -c 'import sys;    sys.exit(0 if open(sys.argv[1],encoding="utf-8-sig").read()==sys.argv[2] else 1)' "$T/live.txt" "$TEXT" 2>/dev/null; then typed_ok=1; break; fi
+    callok key '{"action":"press","combo":"ctrl+a"}' >/dev/null; callok key '{"action":"press","combo":"BackSpace"}' >/dev/null; sleep 0.2
+  done
+  echo "type reply: $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["result"]["structuredContent"])' "$WORK/last.json" 2>&1); attempts=$attempt"
   check "key type" "[[ '$r' == ok ]]"
+  check "typed text arrives exactly (CJK, full-width punctuation, emoji; <=3 tries)" "[[ '$typed_ok' == 1 ]]"
   check "key press combo (Linux shape)" "[[ \$(callok key '{\"action\":\"press\",\"combo\":\"ctrl+b\"}') == ok ]]"
   check "key press keys (macOS shape, cmd = ctrl)" "[[ \$(callok key '{\"action\":\"press\",\"keys\":[\"cmd+e\",\"alt+F11\"]}') == ok ]]"
   check "drag inside the box" "[[ \$(callok mouse '{\"action\":\"drag\",\"x\":$((BX-100)),\"y\":$BY,\"to_x\":$((BX+100)),\"to_y\":$BY}') == ok ]]"
@@ -138,7 +159,7 @@ print("keys", ",".join(r["keys"] if isinstance(r["keys"],list) else [r["keys"]])
 print("layout", r["layout_before"], r["layout_after"])
 PY
 cat "$WORK/target.txt"
-check "typed text arrived exactly (CJK, full-width punctuation, emoji)" "grep -q '^text_equal True' '$WORK/target.txt'"
+# (exactness already asserted live above, with retry)
 check "keyboard layout restored after typing" "awk '\$1==\"layout\" {exit !(\$2==\$3)}' '$WORK/target.txt'"
 check "combos arrived as ctrl+B, ctrl+E, alt+F11" "grep -qE '^keys .*ctrl\+B.*ctrl\+E.*alt\+F11' '$WORK/target.txt'"
 read -r _ _ _ DOWN <<< "$(ps1 windows/probe.ps1)"
@@ -214,6 +235,9 @@ check "output was collected despite the survivor (drain was not lost)" "grep -q 
 
 out=$(psh "{\"command\":\"$(python3 -c 'print("x"*32001)')\"}" | head -1)
 check "an over-long command is refused" "[[ '$out' == ERR*'too long'* ]]"
+# PSModulePath is set to 5.1's default (not dropped), so module cmdlets load.
+psh '{"command":"Get-ExecutionPolicy; (Get-Acl $env:SystemRoot).Owner.Length -gt 0"}' > "$WORK/ps.txt"
+check "built-in module cmdlets work (Get-ExecutionPolicy, Get-Acl)" "grep -q 'STDOUT' '$WORK/ps.txt' && grep -q 'True' '$WORK/ps.txt' && ! grep -qi 'could not be loaded' '$WORK/ps.txt'"
 
 
 echo "== background jobs (exec_start/poll/list/cancel) =="

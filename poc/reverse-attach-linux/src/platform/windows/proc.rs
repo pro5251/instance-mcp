@@ -95,13 +95,34 @@ fn command_line(command: &str) -> String {
     )
 }
 
-/// The daemon's environment, UTF-16, NUL-separated, double-NUL-terminated, **without**
-/// `PSModulePath`: a value inherited from a PowerShell 7 parent makes 5.1 load the wrong
-/// modules and fail (spike 3). A caller's extra vars are merged in.
+/// Windows PowerShell 5.1's own module search path. A `PSModulePath` inherited from a
+/// PowerShell 7 parent points 5.1 at PS7's modules and it fails to load its own (spike
+/// 3); but an *empty* `PSModulePath` is just as bad — 5.1 can no longer find built-in
+/// modules like Microsoft.PowerShell.Security, so Get-Acl / Get-ExecutionPolicy and the
+/// like break. So we set it to 5.1's default rather than dropping it.
+fn ps5_module_path() -> String {
+    let sysroot = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let program_files =
+        std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".to_string());
+    let mut parts = Vec::new();
+    if let Ok(up) = std::env::var("USERPROFILE") {
+        parts.push(format!(r"{up}\Documents\WindowsPowerShell\Modules"));
+    }
+    parts.push(format!(r"{program_files}\WindowsPowerShell\Modules"));
+    parts.push(format!(
+        r"{sysroot}\system32\WindowsPowerShell\v1.0\Modules"
+    ));
+    parts.join(";")
+}
+
+/// The daemon's environment, UTF-16, NUL-separated, double-NUL-terminated, with
+/// `PSModulePath` forced to 5.1's default (see `ps5_module_path`). A caller's extra vars
+/// are merged in (and may override `PSModulePath` deliberately).
 fn environment_block(extra: &serde_json::Value) -> Vec<u16> {
     let mut vars: Vec<(String, String)> = std::env::vars()
         .filter(|(k, _)| !k.eq_ignore_ascii_case("PSModulePath"))
         .collect();
+    vars.push(("PSModulePath".to_string(), ps5_module_path()));
     if let Some(map) = extra.as_object() {
         for (k, v) in map {
             if let Some(s) = v.as_str() {

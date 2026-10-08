@@ -12,7 +12,21 @@ public static class Target {
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+    // Standard workaround for Windows foreground-stealing prevention: attach our input
+    // queue to the current foreground thread's, then SetForegroundWindow succeeds.
+    public static void ForceForeground(IntPtr h) {
+        uint fg = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero);
+        uint me = GetCurrentThreadId();
+        AttachThreadInput(me, fg, true);
+        BringWindowToTop(h); SetForegroundWindow(h);
+        AttachThreadInput(me, fg, false);
+    }
 }
 '@
 [void][Target]::SetProcessDpiAwarenessContext([IntPtr]-4)
@@ -24,7 +38,10 @@ $tb = New-Object Windows.Forms.TextBox; $tb.Multiline = $true; $tb.Dock = 'Fill'
 $tb.Font = New-Object Drawing.Font 'Microsoft JhengHei', 14
 $keys = New-Object Collections.Generic.List[string]
 $tb.Add_KeyDown({ param($s, $e) if ($e.Control -or $e.Alt) { $keys.Add(("{0}{1}{2}" -f ($(if ($e.Control) {'ctrl+'} else {''})), ($(if ($e.Alt) {'alt+'} else {''})), $e.KeyCode)) } })
+$live = Join-Path $Out 'live.txt'
+$tb.Add_TextChanged({ try { Set-Content -LiteralPath $live -Value $tb.Text -Encoding UTF8 -NoNewline } catch {} })
 $form.Controls.Add($tb); $form.Show(); $form.Activate(); [void]$tb.Focus()
+[Target]::ForceForeground($form.Handle); [void]$tb.Focus()
 [Windows.Forms.Application]::DoEvents()
 $r = New-Object Target+RECT; [void][Target]::GetWindowRect($form.Handle, [ref]$r)
 $box = $tb.RectangleToScreen($tb.ClientRectangle)
