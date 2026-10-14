@@ -1,5 +1,6 @@
-# Windows 一步安裝 + Claude Code 自動註冊（spec v0.3）
+# Windows 一步安裝 + MCP client 自動註冊（spec v0.4）
 
+> v0.4 2026-10-14: Q1 widened from Claude Code only to five local MCP clients (ticket 08).
 > Recorded 2026-10-08; decisions settled 2026-10-14 against the author's conventions; rewritten
 > to the to-spec template 2026-10-14.
 
@@ -16,7 +17,7 @@
 - 在 repo 裡雙擊 Windows 安裝入口會直接失敗：「missing … oab-imcp-winpoc.exe beside this script」。安裝程式要求 exe 在旁邊，但 exe 只存在於 release ZIP，repo 裡沒有。
 - 想要 release ZIP 也拿不到：fork 從來沒有發過 Release。既有的 release workflow 中，Windows job 要等 macOS job 建好 Release，但 macOS job 需要 fork 沒有的 Apple 簽章 secrets，所以 Windows ZIP 永遠發不出來。正式發行用的 MSVC 版本也因此從來沒有編過。
 - 就算裝好了，瀏覽器工具（`browser_*`）也接不起來：安裝程式不會安裝 Playwright MCP，不會啟動它，也不會讓 node 轉發給它；但 Windows README 寫的是「會自動接上」。
-- 裝好之後，使用者還要自己抄 URL 和 token，手動設定 Claude Code。
+- 裝好之後，使用者還要自己抄 URL 和 token，手動設定 Claude Code、Codex、GitHub Copilot、Gemini 等本機 AI client。
 - 使用者不一定有 Rust、MSVC 或 gh，也不想研究這些。
 
 ## Solution
@@ -26,8 +27,8 @@
 1. 從 fork 的 GitHub Release 下載最新的 Windows POC ZIP，比對 sha256 後解壓。
 2. 執行 ZIP 裡的安裝程式，保證 exe 和安裝程式是同一版。安裝程式會：裝好 node、開機自動啟動、產生或保留 token、確認健康狀態、有 Tailscale 時設定 `tailscale serve`。
 3. 偵測到 Node.js 時，安裝固定版本的 Playwright MCP，用獨立的開機工作啟動它，並讓 node 把 `browser_*` 轉發過去；沒有 Node.js 就跳過並印出提示。
-4. 偵測到 Claude Code 時，自動把這台 node 註冊成 user scope 的 MCP server（本機 loopback URL 加 bearer token）；找不到就印出可以直接貼上的指令。
-5. 最後印出摘要：URL、token 位置、browser 狀態、Claude Code 狀態。
+4. 對偵測到的每個本機 MCP client（Claude Code、Codex CLI、GitHub Copilot CLI、VS Code（Copilot Chat，含 Insiders）、Gemini CLI），自動把這台 node 註冊成 user 層級的 MCP server（本機 loopback URL 加 bearer token）；Claude Code 找不到時印出可以直接貼上的指令。
+5. 最後印出摘要：URL、token 位置、browser 狀態、每個 client 的註冊狀態與 token 存放位置。
 
 Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或手動觸發時才會跑。作者的 release workflow 不改。
 
@@ -71,6 +72,13 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 36. 身為 repo 維護者，我想要 Windows README 跟實際行為一致，這樣不會誤導使用者。
 37. 身為 repo 維護者，我想要 repo 首頁的 Quick start 有 Windows 的入口連結，這樣使用者找得到安裝方式。
 38. 身為作者，我想要 Linux 和 macOS 的行為、介面、回歸測試全部不變，這樣 Windows 的工作不會破壞已經發行的平台。
+39. 身為 Codex CLI 使用者，我想要安裝完就已經在 Codex 註冊好這台 node，token 透過 Codex 官方的 bearer token 環境變數提供，這樣不用改 TOML。
+40. 身為 GitHub Copilot CLI 使用者，我想要安裝完就已經在 Copilot CLI 註冊好這台 node。
+41. 身為 VS Code（Copilot Chat）使用者，我想要安裝完 VS Code（或 Insiders）的使用者 `mcp.json` 就有這台 node，而且我自己的其他設定保持原樣。
+42. 身為 Gemini CLI 使用者，我想要安裝完就已經在 Gemini 註冊好這台 node（user scope）。
+43. 身為使用者，我想要用 `-Clients` 指定只註冊哪些 client、用 `-NoClients` 全部跳過，這樣我可以自己決定要動哪些設定。
+44. 身為使用者，我想要摘要逐一列出每個 client 的狀態和 token 的存放位置，這樣我知道 token 在哪些檔案裡。
+45. 身為使用者，我想要解除安裝時從每個 client 移除註冊，Codex 的 token 環境變數也一併刪除。
 
 ## Implementation Decisions
 
@@ -83,8 +91,8 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
   - 資產名稱照 POC 命名規則：`oab-imcp-winpoc-<ver>-windows-amd64.zip` 加上 `.sha256`。
   - 安裝程式的 exit code 原樣傳回。
 - **Windows 安裝程式（修改現有的 install-winpoc）**：
-  - 新增 browser 段和 Claude Code 段，兩段都預設開啟，分別用 `-NoBrowser`、`-NoClaudeCode` 關閉。命名對照作者 Linux 安裝程式的 `--no-browser`。
-  - 解除安裝要對稱：移除 Playwright 工作和 Claude Code 註冊。`-Purge` 時再刪掉 Playwright 的安裝目錄、瀏覽器 profile 和輸出目錄。
+  - 新增 browser 段和 MCP client 段，兩段都預設開啟。browser 用 `-NoBrowser` 關閉；client 用 `-NoClients` 全關、`-Clients claude,codex,copilot,vscode,gemini` 指定，`-NoClaudeCode` 保留為「排除 claude」。命名對照作者 Linux 安裝程式的 `--no-browser`。
+  - 解除安裝要對稱：移除 Playwright 工作和每個 client 的註冊。`-Purge` 時再刪掉 Playwright 的安裝目錄、瀏覽器 profile 和輸出目錄。
   - ZIP 裡原本的雙擊入口照舊走同一個安裝程式。
 - **Browser 段**：
   - 找不到 node 或 npm 就跳過。
@@ -98,6 +106,11 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
   - 為了可以重複執行：先移除同名項目（忽略錯誤），再新增，最後用 get 確認。驗證失敗只警告。
   - 找不到 `claude` 時，印出可以直接貼上的指令。
   - `-AllowLogin` 模式下沒有 token，所以不註冊並說明原因：走 loopback 時不會帶 Tailscale 身分。
+- **其他 MCP client（v0.4，ticket 08）**：一張 client 表（偵測、加入、移除、確認），安裝與解除安裝都跑同一張表，名稱同樣用 `oab-imcp-winpoc`、URL 同樣是 loopback。任何 client 失敗都只警告。
+  - Codex CLI：`codex mcp remove` → `codex mcp add <name> --url <url> --bearer-token-env-var OAB_IMCP_WINPOC_TOKEN` → `codex mcp get`。token 寫進使用者環境變數 `OAB_IMCP_WINPOC_TOKEN`（Codex CLI 只支援從環境變數讀 bearer token）；已開的終端機要重開。解除安裝刪除該變數。
+  - GitHub Copilot CLI：`copilot mcp remove` → `copilot mcp add --transport http <name> <url> --header "Authorization: Bearer …"` → `copilot mcp get`（`~\.copilot\mcp-config.json`）。
+  - VS Code（Copilot Chat）與 Insiders：VS Code 沒有移除用的 CLI，`--add-mcp` 的 JSON 參數經 PowerShell 5.1 傳給 `.cmd` 會被破壞引號，所以直接編輯使用者 `mcp.json`（`%APPDATA%\Code\User\mcp.json`、`%APPDATA%\Code - Insiders\User\mcp.json`）的 `servers.<name>`（`type: http`、`url`、`headers`），其餘內容保留，第一次修改前留備份；檔案無法解析（例如有註解）就不動它，只警告並印出要貼的片段。偵測依據是 PATH 上有 `code` / `code-insiders`。
+  - Gemini CLI：`gemini mcp remove -s user` → `gemini mcp add -s user --transport http --header "Authorization: Bearer …" <name> <url>` → `gemini mcp list` 確認（Gemini 沒有 `get`；`~\.gemini\settings.json`）。指令依官方文件，開發機上的 Gemini CLI 安裝損壞，未實機驗證。
 - **Playwright 啟動腳本（修改）**：安裝路徑對齊安裝程式，修正跟實際行為不符的註解。
 - **Release workflow（新增，只給 fork 用）**：
   - 用 `winpoc-v*` tag 或 workflow_dispatch 觸發，跑在 windows-latest。
@@ -124,7 +137,7 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 **測試切入點（只用一個）**：Setup bootstrap 的入口，配合 `-ApiBase` 指向本機的假 GitHub 伺服器。
 
 - 假伺服器提供 releases JSON、ZIP 和 sha256，可以測到這些情境：挑最新的 `winpoc-v*`、`-Version` 指定版本、略過 draft、雜湊不符時中止並刪檔、找不到 release 時的錯誤訊息。
-- 假的 Claude Code：在 PATH 最前面放一個 `claude` stub，把收到的參數記到檔案。用它驗證 remove → add → get 的順序和參數，並確認不會改到真正的 Claude Code 設定。
+- 假的 client：在 PATH 最前面放 `claude`、`codex`、`copilot`、`gemini`、`code`、`code-insiders` stub，把收到的參數記到檔案；`APPDATA` 指向暫存目錄，讓 VS Code 的 `mcp.json` 寫在那裡。用它驗證每個 client 的 remove → add → 確認順序和參數，並確認不會改到真正的 client 設定。Codex 的使用者環境變數是唯一實際寫入的狀態，測試確認安裝後存在、解除安裝後消失。
 - 每次測試執行一次 setup，接著從外部檢查：
   - 兩個 Scheduled Task 是否存在、設定是否正確
   - 有 Node.js 時，node Task 是否帶 `--upstream`
@@ -149,7 +162,7 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 ## Out of Scope
 
 - 讓 exe 本身內建 `install` 子指令，或做 MSI / winget 套件（這些屬於作者的發行決定，跟 code signing 一樣）。
-- 註冊 Claude Desktop、OpenAB Connect 或其他 MCP client。
+- 註冊 Claude Desktop、OpenAB Connect，或 v0.4 client 表以外的 MCP client（日後加一列即可）。
 - Code signing。
 - 自動安裝 Rust、MSVC 或 Node.js。
 - 修改作者的 release workflow，或在 upstream 發行 Windows 版本。
@@ -161,7 +174,7 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 
 | # | 決定 | 依據 |
 |---|---|---|
-| Q1 | 只註冊 Claude Code | 使用者決定 |
+| Q1 | 只註冊 Claude Code → **v0.4：Claude Code、Codex CLI、GitHub Copilot CLI、VS Code（含 Insiders）、Gemini CLI，偵測到就註冊；Codex token 走使用者環境變數** | 使用者決定（2026-10-14 擴大） |
 | Q2 | exe 從 GitHub Release 下載並驗證 sha256 | 使用者決定 |
 | Q3 | 另外新增 fork 專用的 release workflow | 使用者決定；fork 沒有 Apple secrets，作者的 workflow 跑不動 |
 | Q4 | 從 repo 內的 setup 入口開始，加上 AI 安裝指南 | 使用者決定 |
