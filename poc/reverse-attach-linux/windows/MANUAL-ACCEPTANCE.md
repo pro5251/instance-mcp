@@ -17,8 +17,11 @@ PNG/JPEG), `mouse`/`key` (absolute coords on every monitor, CJK + emoji, combos,
 keys), `powershell` (UTF-8, exit codes, timeout→137, env, cwd, over-long rejected, module
 cmdlets), background `exec_*`, reverse-attach real hop + grant persistence + DACL + resume,
 Playwright upstream forwarding + offline resilience, switchboard (attach, observe scope,
-redial on 1000, stop on 4002), and `install-winpoc.ps1` (install → healthy → token DACL →
-uninstall). `exec_start`/GUI-child survival is also confirmed natively via a Scheduled Task.
+redial on 1000, stop on 4002), and the one-step setup through `scripts/setup-winpoc.ps1`
+against a fake GitHub (`smoke_setup.sh`: newest `winpoc-v*`, `-Version`, drafts, sha256
+mismatch, errors, `-ZipPath`; `smoke_install.sh`: install → healthy → token DACL → Playwright
+task + `browser_*` → Claude Code registration via a stub → re-run keeps the token → opt-outs →
+uninstall / `-Purge`). `exec_start`/GUI-child survival is also confirmed natively via a Scheduled Task.
 
 > Known flake: the CJK-IME exact-typing case in `smoke_windows.sh` passes ~5 of 6 runs on a
 > live desktop (the en-US layout switch races the window's first message pump). Re-run; the
@@ -56,3 +59,20 @@ uninstall). `exec_start`/GUI-child survival is also confirmed natively via a Sch
       session and drive `screenshot` / `powershell` from the session CLI.
 - [ ] **Real Playwright**: with Node + `@playwright/mcp` installed (`pw-mcp.ps1`), drive
       `browser_navigate` + `browser_snapshot` against a real page.
+
+## One-step setup (docs/windows-setup.md)
+
+- [ ] **End-to-end release**: push `winpoc-v0.0.1-rc1` on the fork; `winpoc-release.yml`
+      succeeds and the prerelease carries `oab-imcp-winpoc-0.0.1-rc1-windows-amd64.zip` +
+      `.sha256`. The exe needs no VC runtime (runs on a machine without the VC++ redistributable).
+- [ ] **Clean account, from a clone**: in a fresh Windows user with no prior install,
+      `git clone` the fork and double-click `scripts\setup-winpoc.cmd` (no `-ApiBase`). It
+      installs the real release; `/healthz` is `ok`; `claude mcp list` shows
+      `oab-imcp-winpoc` … `Connected`.
+- [ ] **SmartScreen / Mark of the Web**: record what Windows shows for the downloaded exe
+      when run through setup (expected: no "downloaded from the internet" prompt, since setup
+      unblocks the ZIP; SAC may still block the unsigned exe).
+- [ ] **Browser for real**: after setup with Node.js installed, `browser_navigate` to a real
+      page and `browser_snapshot` succeed from Claude Code through `oab-imcp-winpoc`.
+- [ ] **Logon autostart of both tasks**: sign out and in; `\OpenAB-POC\oab-imcp-winpoc` and
+      `\OpenAB-POC\oab-imcp-winpoc-pw` both start, `browser_*` are listed again.

@@ -6,6 +6,12 @@ pending the author's confirmation.
 
 ## Install (one step)
 
+From a clone of the repo, double-click `scripts\setup-winpoc.cmd`: it downloads this ZIP from
+the newest release, checks its sha256 and runs the installer below for you. Full guide, options
+and troubleshooting: [`docs/windows-setup.md`](../../../docs/windows-setup.md).
+
+From this ZIP directly:
+
 1. Unzip anywhere (e.g. your Downloads).
 2. **Double-click `install.cmd`.**
 
@@ -26,16 +32,23 @@ installer then runs `tailscale serve` for you and prints an `https://…ts.net/m
 
 - **Lend it to an agent**: in OpenAB Connect / Remote, pick this computer. The node dials
   the session and the agent can see the screen, click, type and run PowerShell.
-- **Browser tools** (`browser_*`): install [Node.js](https://nodejs.org), then the node
-  picks up `pw-mcp.ps1` (Playwright) automatically.
-- **A local MCP client** can also point at the printed loopback URL with the bearer token.
+- **Browser tools** (`browser_*`): with [Node.js](https://nodejs.org) installed, the installer
+  sets up `@playwright/mcp` 0.0.82 + Chromium as a second logon task (`pw-mcp.ps1`) and has the
+  node re-serve it. Installed Node.js later? Run the installer again. `-NoBrowser` skips it.
+- **Claude Code**: with `claude` on PATH, the installer registers the node as user-scope MCP
+  server `oab-imcp-winpoc` (loopback URL + bearer token; the token is then stored in plain
+  text in Claude Code's config). Otherwise it prints the command to paste. `-NoClaudeCode`
+  skips it.
+- **Other MCP clients** can point at the printed loopback URL with the bearer token.
 
 ## Manage
 
 - Status: `.\install-winpoc.ps1 -Status`
-- Update: unzip the new version, double-click `install.cmd` again (your token is kept).
-- Remove: double-click `uninstall.cmd` (add `-Purge` in a shell to also delete the token
-  and saved grants).
+- Update: re-run `scripts\setup-winpoc.cmd`, or unzip the new version and double-click
+  `install.cmd` again (your token is kept).
+- Remove: double-click `uninstall.cmd` (add `-Purge` in a shell to also delete the token,
+  saved grants and the browser profile). Uninstall also removes the Playwright task and the
+  Claude Code registration.
 
 ## Tools
 
