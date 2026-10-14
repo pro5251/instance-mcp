@@ -62,10 +62,13 @@ uninstall / `-Purge`). `exec_start`/GUI-child survival is also confirmed nativel
 
 ## One-step setup (docs/windows-setup.md)
 
-- [ ] **End-to-end release**: push `v0.8.0-winpoc.1` on the fork; `release.yml` runs
+- [x] **End-to-end release**: push `v0.8.0-winpoc.1` on the fork; `release.yml` runs
       `fork-release` (the macOS job is skipped), the Linux and Windows jobs upload, and the
       prerelease carries `oab-imcp-winpoc-0.8.0-winpoc.1-windows-amd64.zip` + `.sha256` and the
-      Linux tarballs. The exe needs no VC runtime (runs on a machine without the VC++ redistributable).
+      Linux tarballs. *2026-10-14: done; run 38534602012, all jobs success, macOS skipped, six
+      assets; the dumpbin check found no VC runtime import.*
+- [ ] **No VC++ redistributable**: the released exe runs on a machine without the VC++
+      redistributable installed.
 - [ ] **Clean account, from a clone**: in a fresh Windows user with no prior install,
       `git clone` the fork and double-click `scripts\setup-winpoc.cmd` (no `-ApiBase`). It
       installs the real release; `/healthz` is `ok`; `claude mcp list` shows

@@ -269,12 +269,68 @@ Upstream, the `release` job (signed macOS installer) creates the release and the
 Windows jobs add their files. A fork has no Apple signing secrets, so there that job is
 skipped and `fork-release` creates a prerelease instead; the Linux and Windows jobs run
 unchanged, which is exactly the path a merge back into upstream takes. On a fork, tag with a
-suffix so you never take an upstream version number:
+suffix (`v0.8.0-winpoc.1`) so you never take an upstream version number.
 
-```sh
-git tag v0.8.0-winpoc.1 && git push origin v0.8.0-winpoc.1
-# retry: gh workflow run release.yml --ref v0.8.0-winpoc.1 -f tag=v0.8.0-winpoc.1
-```
+### Release and install, end to end
+
+Publishing a release and installing the node are two separate steps: after steps 1–3 the
+release exists on GitHub, but nothing is installed on any PC until step 4 runs setup there.
+
+1. **Publish the code.** The tag must point at a commit that has the current `release.yml`
+   (GitHub runs the workflow file of the tagged commit), so push the branch first:
+
+   ```powershell
+   git push origin feat/windows-setup
+   ```
+
+2. **Tag and push the tag.** This triggers `release.yml`:
+
+   ```powershell
+   git tag v0.8.0-winpoc.1          # on the commit you just pushed
+   git push origin v0.8.0-winpoc.1
+   gh run watch -R pro5251/instance-mcp
+   # retry a failed run: gh workflow run release.yml --ref v0.8.0-winpoc.1 -f tag=v0.8.0-winpoc.1
+   ```
+
+3. **Check the run and the release.**
+
+   ```powershell
+   gh run view <run-id> -R pro5251/instance-mcp --json jobs -q '.jobs[] | .name + ": " + .conclusion'
+   gh release view v0.8.0-winpoc.1 -R pro5251/instance-mcp --json assets -q '.assets[].name'
+   ```
+
+   | Job | On a fork | Upstream |
+   |---|---|---|
+   | Universal app + signed/notarized pkg (`release`) | skipped | success (creates the release) |
+   | Create the release on a fork (`fork-release`) | success (creates a prerelease) | skipped |
+   | Linux hands node tarball (amd64, arm64) | success | success |
+   | Windows hands node ZIP (POC, x64) | success (includes the dumpbin static-CRT check) | success |
+
+   The release must carry `oab-imcp-winpoc-<ver>-windows-amd64.zip` and its `.sha256` (setup
+   ignores releases without them), plus `oab-instance-mcp-<ver>-linux-{amd64,arm64}.tar.gz`
+   and their `.sha256`. Verified on the fork on 2026-10-14 with `v0.8.0-winpoc.1`.
+
+4. **Install on the PC.** Run setup there (it takes the newest release with the Windows ZIP):
+
+   ```powershell
+   scripts\setup-winpoc.cmd                                                            # double-click equivalent
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-winpoc.ps1         # no pause at the end
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-winpoc.ps1 -Clients claude   # only Claude Code
+   ```
+
+   Setup changes the configs of every MCP client it finds (see [MCP clients](#3-mcp-clients));
+   pass `-Clients` to limit that, or `-NoClients` to touch none.
+
+5. **Check that it is installed.** Only now is the node installed and registered:
+
+   ```powershell
+   Get-ScheduledTask -TaskPath '\OpenAB-POC\' | Select-Object TaskName, State   # oab-imcp-winpoc (+ -pw)
+   curl.exe -s http://127.0.0.1:8796/healthz                                     # ok
+   claude mcp list                                                               # oab-imcp-winpoc: … ✓ Connected
+   ```
+
+   Claude Code sessions that were already open load the new server only after a restart;
+   open a new terminal for Codex (it reads `OAB_IMCP_WINPOC_TOKEN`).
 
 The default repo lives in one place, the variables block at the top of
 `scripts/setup-winpoc.ps1`. For an upstream PR: set it to `openabdev/instance-mcp` (and the
