@@ -67,6 +67,11 @@ uninstall / `-Purge`). `exec_start`/GUI-child survival is also confirmed nativel
       prerelease carries `oab-imcp-winpoc-0.8.0-winpoc.1-windows-amd64.zip` + `.sha256` and the
       Linux tarballs. *2026-10-14: done; run 38534602012, all jobs success, macOS skipped, six
       assets; the dumpbin check found no VC runtime import.*
+- [x] **Install from the real release (developer account)**: `scripts\setup-winpoc.cmd` with
+      no `-ApiBase` installs `v0.8.0-winpoc.1`. *2026-10-14: both logon tasks Running,
+      `/healthz` ok, `tools/list` = 9 local + 32 `browser_*` (~15 ms), `claude mcp get
+      oab-imcp-winpoc` = `✔ Connected` (the very first call said `tools fetch failed · Request
+      timed out`, then settled).* The clean-account run below is still open.
 - [ ] **No VC++ redistributable**: the released exe runs on a machine without the VC++
       redistributable installed.
 - [ ] **Clean account, from a clone**: in a fresh Windows user with no prior install,
