@@ -89,7 +89,7 @@ Release 由 `release.yml` 產生，也就是日後併回 upstream 的同一個 w
 - **Setup bootstrap（新增，放在 repo 的 scripts 目錄）**：有一個雙擊入口和一個 PowerShell bootstrap。bootstrap 只負責四件事：找到版本 → 下載 → 驗證 → 解壓，然後把剩下的參數原封不動交給 ZIP 裡的安裝程式。它本身不包含任何安裝邏輯。
   - 介面：`-Version <tag>`、`-ZipPath <path>`、`-Repo <owner/name>`、`-ApiBase <url>`（測試用，預設是 GitHub API），其餘參數直接轉給安裝程式。
   - 預設的 repo 寫在腳本開頭的變數區，POC 期間是 fork，併入 upstream 時改成 `openabdev/instance-mcp`。
-  - 怎麼挑版本：從 releases 清單裡過濾 `v*`、不是 draft、而且附有 `oab-imcp-winpoc-<ver>-windows-amd64.zip`（`<ver>` = tag 去掉 `v`）的，依發布時間取最新的一個；有指定 `-Version` 就用指定的。沒有 Windows ZIP 的 release（例如作者較早的版本）一律略過。
+  - 怎麼挑版本：從 releases 清單裡過濾 `v*`、不是 draft、而且附有 `oab-imcp-winpoc-<ver>-windows-amd64.zip` 與其 `.sha256`（`<ver>` = tag 去掉 `v`）的，依發布時間取最新的一個；有指定 `-Version` 就用指定的。沒有 Windows ZIP 的 release（例如作者較早的版本）一律略過。
   - 資產名稱照 POC 命名規則：`oab-imcp-winpoc-<ver>-windows-amd64.zip` 加上 `.sha256`。
   - 安裝程式的 exit code 原樣傳回。
 - **Windows 安裝程式（修改現有的 install-winpoc）**：
@@ -139,7 +139,7 @@ Release 由 `release.yml` 產生，也就是日後併回 upstream 的同一個 w
 
 **測試切入點（只用一個）**：Setup bootstrap 的入口，配合 `-ApiBase` 指向本機的假 GitHub 伺服器。
 
-- 假伺服器提供 releases JSON、ZIP 和 sha256，可以測到這些情境：挑最新的 `winpoc-v*`、`-Version` 指定版本、略過 draft、雜湊不符時中止並刪檔、找不到 release 時的錯誤訊息。
+- 假伺服器提供 releases JSON、ZIP 和 sha256，可以測到這些情境：挑最新、附有 Windows ZIP 的 `v*`（略過沒有 Windows ZIP 的 release）、`-Version` 指定版本、略過 draft、雜湊不符時中止並刪檔、找不到 release 時的錯誤訊息。
 - 假的 client：在 PATH 最前面放 `claude`、`codex`、`copilot`、`gemini`、`code`、`code-insiders` stub，把收到的參數記到檔案；`APPDATA` 指向暫存目錄，讓 VS Code 的 `mcp.json` 寫在那裡。用它驗證每個 client 的 remove → add → 確認順序和參數，並確認不會改到真正的 client 設定。Codex 的使用者環境變數是唯一實際寫入的狀態，測試確認安裝後存在、解除安裝後消失。
 - 每次測試執行一次 setup，接著從外部檢查：
   - 兩個 Scheduled Task 是否存在、設定是否正確
@@ -186,7 +186,7 @@ Release 由 `release.yml` 產生，也就是日後併回 upstream 的同一個 w
 | D2 | 安裝指南用獨立文件，README 只放連結 | 作者 Linux setup 指南加 README Quick start 的結構 |
 | D3 | setup 入口放在 scripts 目錄 | 作者的安裝腳本都在 scripts |
 | D4 | 預設 repo 集中設定在一處，可以覆寫 | 跟 POC 名稱一樣「集中在一處改」 |
-| D5 | ~~release workflow 不設審批閘門、只給 fork 用~~ v0.5：沿用 `release.yml` 的 `release` environment；fork 沒有設定保護規則，所以不需要核准 | fork 上 environment 會自動建立、沒有保護規則 |
+| D5 | ~~release workflow 不設審批閘門、只給 fork 用~~ v0.5：沿用 `release.yml` 的 `release` environment，`fork-release` 也一樣；fork 沒有設定保護規則，所以不需要核准 | fork 上 environment 會自動建立、沒有保護規則 |
 | D6 | `@playwright/mcp@0.0.82` 固定版本 | 作者 macOS 和 Linux 用同一個版本 |
 | D7 | exe 不內建 install 子指令 | 作者各平台都用 pkg 或安裝腳本 |
 | D8 | 旗標命名為 `-NoBrowser` 和 `-NoClaudeCode` | 作者 Linux 安裝程式的 `--no-browser` |

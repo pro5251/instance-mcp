@@ -24,6 +24,9 @@ concurrency:
 jobs:
   release:
     name: Universal app + signed/notarized pkg
+    # Upstream only: it needs the Apple signing secrets. A fork gets `fork-release` instead
+    # (keep the two conditions exact opposites).
+    if: github.repository_owner == 'openabdev'
     runs-on: macos-15
     environment: release
     env:
@@ -177,6 +180,28 @@ jobs:
             /usr/bin/security delete-keychain "$KEYCHAIN" || true
           fi
 
+  fork-release:
+    name: Create the release on a fork (no macOS signing)
+    # Stand-in for the `release` job's "create the release" role on forks, which have no
+    # Apple signing secrets: the conditions are exclusive, so exactly one job creates the
+    # release in any repo, and the linux/windows jobs below run unchanged. Forks tag with a
+    # suffix (v0.8.0-winpoc.1) so they never take an upstream version number.
+    if: github.repository_owner != 'openabdev'   # exact opposite of the release job's
+    runs-on: ubuntu-latest
+    # Same gate as every other job (on a fork the environment has no rules unless you add them).
+    environment: release
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create the prerelease
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease \
+              --title "$RELEASE_TAG (fork, unsigned, no macOS pkg)" \
+              --notes "Fork build of release.yml: Linux tarballs and the Windows POC ZIP, no signed macOS installer."
+
   linux:
     name: Linux hands node tarball (${{ matrix.arch }})
     strategy:
@@ -252,6 +277,18 @@ jobs:
       - name: Build (static CRT)
         working-directory: poc/reverse-attach-linux
         run: cargo build --release
+      - name: Check the exe needs no VC runtime DLL
+        shell: pwsh
+        working-directory: poc/reverse-attach-linux
+        run: |
+          # The import table, read with the runner's MSVC dumpbin.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe not found" }
+          $deps = @(& $dumpbin /nologo /dependents target/release/reverse-attach.exe | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '\.dll$' })
+          Write-Host "imports: $($deps -join ', ')"
+          $crt = @($deps | Where-Object { $_ -match '^(vcruntime|msvcp)\d+.*\.dll$|^api-ms-win-crt-|^ucrtbase\.dll$' })
+          if ($crt) { throw "exe needs the VC runtime ($($crt -join ', ')); static CRT did not apply" }
       - name: Package
         shell: pwsh
         working-directory: poc/reverse-attach-linux
@@ -276,7 +313,7 @@ jobs:
             sleep 30
           done
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null || {
-            echo "release $RELEASE_TAG does not exist after 30 min; did the macOS job fail or get rejected?" >&2
+            echo "release $RELEASE_TAG does not exist after 30 min; did the job that creates it fail or get rejected (release upstream, fork-release on a fork)?" >&2
             exit 1
           }
           gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber \

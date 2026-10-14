@@ -18,7 +18,7 @@ keys), `powershell` (UTF-8, exit codes, timeout→137, env, cwd, over-long rejec
 cmdlets), background `exec_*`, reverse-attach real hop + grant persistence + DACL + resume,
 Playwright upstream forwarding + offline resilience, switchboard (attach, observe scope,
 redial on 1000, stop on 4002), and the one-step setup through `scripts/setup-winpoc.ps1`
-against a fake GitHub (`smoke_setup.sh`: newest `winpoc-v*`, `-Version`, drafts, sha256
+against a fake GitHub (`smoke_setup.sh`: newest `v*` with the Windows ZIP, `-Version`, drafts, sha256
 mismatch, errors, `-ZipPath`; `smoke_install.sh`: install → healthy → token DACL → Playwright
 task + `browser_*` → Claude Code registration via a stub → re-run keeps the token → opt-outs →
 uninstall / `-Purge`). `exec_start`/GUI-child survival is also confirmed natively via a Scheduled Task.
@@ -62,9 +62,10 @@ uninstall / `-Purge`). `exec_start`/GUI-child survival is also confirmed nativel
 
 ## One-step setup (docs/windows-setup.md)
 
-- [ ] **End-to-end release**: push `winpoc-v0.0.1-rc1` on the fork; `winpoc-release.yml`
-      succeeds and the prerelease carries `oab-imcp-winpoc-0.0.1-rc1-windows-amd64.zip` +
-      `.sha256`. The exe needs no VC runtime (runs on a machine without the VC++ redistributable).
+- [ ] **End-to-end release**: push `v0.8.0-winpoc.1` on the fork; `release.yml` runs
+      `fork-release` (the macOS job is skipped), the Linux and Windows jobs upload, and the
+      prerelease carries `oab-imcp-winpoc-0.8.0-winpoc.1-windows-amd64.zip` + `.sha256` and the
+      Linux tarballs. The exe needs no VC runtime (runs on a machine without the VC++ redistributable).
 - [ ] **Clean account, from a clone**: in a fresh Windows user with no prior install,
       `git clone` the fork and double-click `scripts\setup-winpoc.cmd` (no `-ApiBase`). It
       installs the real release; `/healthz` is `ok`; `claude mcp list` shows

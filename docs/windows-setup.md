@@ -64,7 +64,7 @@ git clone https://github.com/pro5251/instance-mcp
 
 Then **double-click `scripts\setup-winpoc.cmd`**. It:
 
-1. Finds the newest `winpoc-v*` release on GitHub, downloads
+1. Finds the newest `v*` release on GitHub that carries the Windows ZIP, downloads
    `oab-imcp-winpoc-<ver>-windows-amd64.zip` and its `.sha256`, checks the hash, removes the
    "downloaded from the internet" mark and unpacks it to `%TEMP%\oab-imcp-winpoc-setup`.
 2. Runs `install-winpoc.ps1` **from that ZIP**, so the installer and the exe are the same
@@ -105,7 +105,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-winpoc.ps1 [op
 
 | Option | Effect |
 |---|---|
-| `-Version <tag>` | Install that release (`winpoc-v0.0.1` or `0.0.1`) instead of the newest; use it to roll back |
+| `-Version <tag>` | Install that release (`v0.8.0-winpoc.1` or `0.8.0-winpoc.1`) instead of the newest; use it to roll back |
 | `-ZipPath <zip>` | Install a ZIP you already have: no download, **no hash check** (offline, rate limited) |
 | `-Repo <owner/name>` | Take releases from another repo (default `pro5251/instance-mcp`) |
 | `-ApiBase <url>` | GitHub API base URL (tests point it at a local fake) |
@@ -119,9 +119,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-winpoc.ps1 [op
 | `-Uninstall [-Purge]` | Remove (see [Uninstall](#uninstall)) |
 | `-Status` | Show both tasks and whether program/data are present |
 
-Draft releases and tags that do not start with `winpoc-v` are ignored. The exit code is the
-installer's: `0` installed, non-zero failed (`2` no such release, `3` hash mismatch, `4`
-download/API failure, `1` installer error).
+Drafts, tags that do not start with `v`, and releases without the Windows ZIP and its `.sha256`
+(macOS/Linux-only releases) are ignored. The exit code is the installer's: `0` installed,
+non-zero failed (`2` no such release, `3` hash mismatch, `4` download/API failure, `1`
+installer error).
 
 ## 2. Verify
 
@@ -235,8 +236,8 @@ from the repo root. Each step has a check; stop at the first that fails and use 
 | Symptom | Cause | Do this |
 |---|---|---|
 | `cannot list releases … rate limit` / `HTTP 403` | GitHub API allows 60 unauthenticated calls per hour per IP | Wait an hour, or download the ZIP from the Releases page and run with `-ZipPath <zip>` |
-| `no winpoc-v* release found` | The repo has not published one | Pass `-Repo <owner/name>` of a repo that has, or `-ZipPath` |
-| `release winpoc-v… not found` | Typo, or a draft | Pick one of the listed tags |
+| `no release with oab-imcp-winpoc-<ver>-windows-amd64.zip found` | The repo has not published a release with the Windows ZIP | Pass `-Repo <owner/name>` of a repo that has, or `-ZipPath` |
+| `release v… not found (or it has no Windows ZIP)` | Typo, a draft, or a macOS/Linux-only release | Pick one of the listed tags |
 | `sha256 mismatch` | Truncated or altered download; nothing was installed and the file is deleted | Retry once; if it repeats, do not install that file, report it |
 | `browser : skipped - Node.js not found` | No `node`/`npm` on PATH | Install Node.js LTS, open a new shell, re-run setup |
 | `browser : FAILED …` | npm or the Chromium download failed (proxy, disk) | Read `logs\pw-install.log`; core tools work regardless; re-run setup |
@@ -259,18 +260,26 @@ from the repo root. Each step has a check; stop at the first that fails and use 
 
 ## For maintainers: publishing a release
 
-The fork-only workflow [`.github/workflows/winpoc-release.yml`](../.github/workflows/winpoc-release.yml)
-builds the exe with MSVC and a static CRT (no VC runtime needed), packs the ZIP exactly like
-`release.yml`'s `windows` job and publishes it as a prerelease. Normal pushes never release:
+The Windows ZIP comes from `release.yml`'s `windows` job, the same workflow upstream uses: it
+builds the exe with MSVC and a static CRT (no VC runtime needed; a step fails the build if the
+exe imports one), packs the ZIP and uploads it with its `.sha256` to the release. Only `v*`
+tags (or a manual dispatch) run it; normal pushes never release.
+
+Upstream, the `release` job (signed macOS installer) creates the release and the Linux and
+Windows jobs add their files. A fork has no Apple signing secrets, so there that job is
+skipped and `fork-release` creates a prerelease instead; the Linux and Windows jobs run
+unchanged, which is exactly the path a merge back into upstream takes. On a fork, tag with a
+suffix so you never take an upstream version number:
 
 ```sh
-git tag winpoc-v0.0.1 && git push origin winpoc-v0.0.1
-# retry: gh workflow run winpoc-release.yml --ref winpoc-v0.0.1 -f tag=winpoc-v0.0.1
+git tag v0.8.0-winpoc.1 && git push origin v0.8.0-winpoc.1
+# retry: gh workflow run release.yml --ref v0.8.0-winpoc.1 -f tag=v0.8.0-winpoc.1
 ```
 
 The default repo lives in one place, the variables block at the top of
 `scripts/setup-winpoc.ps1`. For an upstream PR: set it to `openabdev/instance-mcp` (and the
-clone URL and `-Repo` default in this guide), and leave `winpoc-release.yml` out (upstream ships the ZIP from `release.yml`).
+clone URL and `-Repo` default in this guide). `fork-release` and the `if:` on the macOS job do
+not change what upstream does; keep or drop them as the author prefers.
 
 Smoke tests (from WSL, real desktop): `poc/reverse-attach-linux/windows/smoke_setup.sh`
 (release selection, `-Version`, hash mismatch, errors, `-ZipPath`) and `smoke_install.sh`

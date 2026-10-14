@@ -65,8 +65,10 @@ APPD_W=$(wslpath -w "$APPD")
 seed_insiders(){ printf '{\n\t"inputs": [],\n\t"servers": {\n\t\t"mine": { "type": "http", "url": "http://example.invalid/mcp" },\n\t\t"tool": { "type": "stdio", "command": "uvx", "args": ["x"], "description": "我的伺服器" }\n\t}\n}\n' > "$APPD/Code - Insiders/User/mcp.json"; }
 seed_insiders; rm -f "$APPD/Code - Insiders/User/"*.bak
 
-# Releases, newest first: a non-winpoc tag (ignored), a draft winpoc-v0.0.3 (skipped), the
-# good 0.0.2 and 0.0.1, and an old 0.0.9 whose .sha256 is wrong. test/empty has no winpoc-v*.
+# Releases as release.yml publishes them (v* tags), newest first: v9.9.9 and v0.0.5 with no
+# Windows ZIP (an upstream macOS/Linux-only release: skipped), a non-v tag with a ZIP
+# (ignored), a draft v0.0.3 (skipped), the good v0.0.2 and v0.0.1, and an old v0.0.9 whose
+# .sha256 is wrong. test/empty has only a release without a Windows ZIP.
 python3 - "$FIX" "$EXE_SRC" <<'PY'
 import hashlib, json, os, sys, zipfile
 fix, exe = sys.argv[1], sys.argv[2]
@@ -84,11 +86,14 @@ def pack(ver, bad=False):
 rel = lambda tag, day, assets, draft=False: {"tag_name": tag, "draft": draft, "prerelease": True,
     "created_at": f"2025-{13 - int(day[:2]):02d}-01T00:00:00Z",
     "published_at": None if draft else f"2026-{day}T00:00:00Z", "assets": assets}
+other = [{"name": "oab-instance-mcp-0.0.5-linux-amd64.tar.gz", "browser_download_url": "{BASE}/dl/none"}]
 json.dump([rel("v9.9.9", "10-09", []),
-           rel("winpoc-v0.0.3", "10-08", pack("0.0.3", bad=True), draft=True),
-           rel("winpoc-v0.0.2", "10-02", pack("0.0.2")),
-           rel("winpoc-v0.0.1", "10-01", pack("0.0.1")),
-           rel("winpoc-v0.0.9", "09-01", pack("0.0.9", bad=True))],
+           rel("winpoc-v7.0.0", "10-08", pack("7.0.0", bad=True)),
+           rel("v0.0.5", "10-07", other),
+           rel("v0.0.3", "10-06", pack("0.0.3", bad=True), draft=True),
+           rel("v0.0.2", "10-02", pack("0.0.2")),
+           rel("v0.0.1", "10-01", pack("0.0.1")),
+           rel("v0.0.9", "09-01", pack("0.0.9", bad=True))],
           open(os.path.join(fix, "test__winpoc.json"), "w"), indent=1)
 json.dump([rel("v9.9.9", "10-09", [])], open(os.path.join(fix, "test__empty.json"), "w"))
 PY

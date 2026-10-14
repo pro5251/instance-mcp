@@ -10,10 +10,14 @@
                        [installer args: -Token <str> | -AllowLogin <email>, -NoBrowser,
                         -Clients <list> | -NoClients, -Uninstall [-Purge], -Status, ...]
 
-      -Version  install this release (winpoc-v0.0.1 or 0.0.1) instead of the newest winpoc-v*
+      -Version  install this release (v0.8.0-winpoc.1 or 0.8.0-winpoc.1) instead of the newest
       -ZipPath  install from a local ZIP: no download, no hash check (offline / rate limited)
-      -Repo     GitHub repo with the winpoc-v* releases (default below)
+      -Repo     GitHub repo whose releases carry the Windows ZIP (default below)
       -ApiBase  GitHub API base URL (tests point it at a local fake)
+
+    "Newest" is the newest non-draft v* release (release.yml's tags) that carries
+    oab-imcp-winpoc-<ver>-windows-amd64.zip and its .sha256; releases without them (macOS/Linux
+    only, or still uploading) are skipped.
 
     Re-running it updates the node; the token is kept. Names are the POC names of spec 13.2.
 #>
@@ -27,7 +31,7 @@ param(
 )
 # ---- names (POC; change here once the author settles them) ------------------------------
 $DefaultRepo = 'pro5251/instance-mcp'   # upstream PR: openabdev/instance-mcp
-$TagPrefix   = 'winpoc-v'
+$TagPrefix   = 'v'                       # release.yml's tags; <ver> = tag without it
 $AssetStem   = 'oab-imcp-winpoc'        # oab-imcp-winpoc-<ver>-windows-amd64.zip (+ .sha256)
 $WorkDir     = Join-Path $env:TEMP "$AssetStem-setup"
 $UserAgent   = "$AssetStem-setup"
@@ -65,26 +69,31 @@ function Get-Release {
       "check the network, or wait an hour if GitHub rate limited you",
       "or download $AssetStem-<ver>-windows-amd64.zip from https://github.com/$Repo/releases and run: setup-winpoc.cmd -ZipPath <zip>")
   }
-  $cands = @($list | Where-Object { $_.tag_name -like "$TagPrefix*" -and -not $_.draft })
+  $cands = @($list | Where-Object { $_.tag_name -like "$TagPrefix*" -and -not $_.draft } | Where-Object {
+    $zipName = Get-ZipName $_.tag_name
+    $names = @($_.assets | ForEach-Object { $_.name })
+    ($names -contains $zipName) -and ($names -contains "$zipName.sha256") })
   if ($Version) {
     $want = if ($Version -like "$TagPrefix*") { $Version } else { "$TagPrefix$Version" }
     $rel = $cands | Where-Object { $_.tag_name -eq $want } | Select-Object -First 1
     if (-not $rel) {
       $have = ($cands | ForEach-Object { $_.tag_name }) -join ', '
       if (-not $have) { $have = 'none' }
-      Fail 2 "release $want not found in $Repo" @("published $TagPrefix* releases: $have", "or install a local ZIP: setup-winpoc.cmd -ZipPath <zip>")
+      Fail 2 "release $want not found in $Repo (or it has no Windows ZIP)" @("releases with the Windows ZIP: $have", "or install a local ZIP: setup-winpoc.cmd -ZipPath <zip>")
     }
     return $rel
   }
   # Newest by publish time (created_at is the tagged commit's date); drafts have none.
   $rel = $cands | Sort-Object { if ($_.published_at) { [datetime]$_.published_at } else { [datetime]$_.created_at } } -Descending | Select-Object -First 1
   if (-not $rel) {
-    Fail 2 "no $TagPrefix* release found in $Repo" @(
-      "the maintainer publishes one by pushing a $TagPrefix* tag (.github/workflows/winpoc-release.yml)",
+    Fail 2 "no release with $AssetStem-<ver>-windows-amd64.zip found in $Repo" @(
+      "the maintainer publishes one by pushing a $TagPrefix* tag (.github/workflows/release.yml)",
       "or pass -Repo <owner/name>, or install a local ZIP: setup-winpoc.cmd -ZipPath <zip>")
   }
   return $rel
 }
+
+function Get-ZipName([string]$tag) { "$AssetStem-$($tag.Substring($TagPrefix.Length))-windows-amd64.zip" }
 
 function Get-Asset($rel, [string]$name) {
   $a = @($rel.assets) | Where-Object { $_.name -eq $name } | Select-Object -First 1
@@ -107,8 +116,7 @@ if ($ZipPath) {
   Write-Host "setup: installing from local ZIP $ZipPath (no download, no hash check)"
 } else {
   $rel = Get-Release
-  $ver = $rel.tag_name.Substring($TagPrefix.Length)
-  $zipName = "$AssetStem-$ver-windows-amd64.zip"
+  $zipName = Get-ZipName $rel.tag_name
   $zipUrl = Get-Asset $rel $zipName
   $shaUrl = Get-Asset $rel "$zipName.sha256"
   Write-Host "setup: release $($rel.tag_name) from $Repo"
