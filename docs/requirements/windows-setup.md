@@ -1,5 +1,7 @@
-# Windows 一步安裝 + MCP client 自動註冊（spec v0.4）
+# Windows 一步安裝 + MCP client 自動註冊（spec v0.5）
 
+> v0.5 2026-10-14: Q3 reversed - the fork releases through release.yml itself (v* tags), with a
+> fork-only stand-in for the macOS job, to exercise the real merge-back path (ticket 09).
 > v0.4 2026-10-14: Q1 widened from Claude Code only to five local MCP clients (ticket 08).
 > Recorded 2026-10-08; decisions settled 2026-10-14 against the author's conventions; rewritten
 > to the to-spec template 2026-10-14.
@@ -30,7 +32,7 @@
 4. 對偵測到的每個本機 MCP client（Claude Code、Codex CLI、GitHub Copilot CLI、VS Code（Copilot Chat，含 Insiders）、Gemini CLI），自動把這台 node 註冊成 user 層級的 MCP server（本機 loopback URL 加 bearer token）；Claude Code 找不到時印出可以直接貼上的指令。
 5. 最後印出摘要：URL、token 位置、browser 狀態、每個 client 的註冊狀態與 token 存放位置。
 
-Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或手動觸發時才會跑。作者的 release workflow 不改。
+Release 由 `release.yml` 產生，也就是日後併回 upstream 的同一個 workflow：推 `v*` tag 時，Linux 與 Windows job 照原樣建置並上傳。fork 沒有 Apple 簽章 secrets，所以在 fork 上 macOS job 會跳過，改由一個只在 fork 執行的小 job 建立 prerelease；upstream 的行為不變。
 
 ## User Stories
 
@@ -64,10 +66,10 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 28. 身為使用者，我想要重新執行 setup 就能更新到新版，這樣更新跟安裝是同一個步驟。
 29. 身為請 AI 代為安裝的使用者，我想要 repo 裡有一份 AI 照做就能完成安裝的指南，裡面包含驗證步驟和常見錯誤的處理方式，這樣 AI 不用自己摸索。
 30. 身為 AI agent，我想要安裝指南有明確的成功判斷（健康檢查回 ok、`claude mcp list` 出現 Connected），這樣我能確定安裝完成。
-31. 身為 repo 維護者，我想要推一個 `winpoc-v*` tag 就自動產生 Windows ZIP Release，這樣不用在本機手動打包。
+31. 身為 repo 維護者，我想要在 fork 推一個 `v*` tag（例如 `v0.8.0-winpoc.1`）就經由 `release.yml` 自動產生含 Windows ZIP 的 Release，這樣驗證的就是併回 upstream 後的真實流程。
 32. 身為 repo 維護者，我想要一般 push 不會觸發 release，這樣只有我決定要發布時才會發。
 33. 身為 repo 維護者，我想要 Release 是用 MSVC 加 static CRT 編的，這樣使用者不需要另外裝 VC runtime，正式發行用的建置方式也能被驗證到。
-34. 身為 repo 維護者，我想要作者的 release workflow 一行都不改，這樣不會影響作者的 macOS 和 Linux 發行。
+34. 身為 repo 維護者，我想要 `release.yml` 在 upstream 的行為（macOS 簽章後建立 Release、Linux／Windows 補上傳、approval 閘門）完全不變，fork 專用的部分只在 fork 生效，這樣不會影響作者的 macOS 和 Linux 發行。
 35. 身為 repo 維護者，我想要預設的下載來源 repo 只在一個地方設定，這樣日後併入 upstream 時只要改一處。
 36. 身為 repo 維護者，我想要 Windows README 跟實際行為一致，這樣不會誤導使用者。
 37. 身為 repo 維護者，我想要 repo 首頁的 Quick start 有 Windows 的入口連結，這樣使用者找得到安裝方式。
@@ -87,7 +89,7 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 - **Setup bootstrap（新增，放在 repo 的 scripts 目錄）**：有一個雙擊入口和一個 PowerShell bootstrap。bootstrap 只負責四件事：找到版本 → 下載 → 驗證 → 解壓，然後把剩下的參數原封不動交給 ZIP 裡的安裝程式。它本身不包含任何安裝邏輯。
   - 介面：`-Version <tag>`、`-ZipPath <path>`、`-Repo <owner/name>`、`-ApiBase <url>`（測試用，預設是 GitHub API），其餘參數直接轉給安裝程式。
   - 預設的 repo 寫在腳本開頭的變數區，POC 期間是 fork，併入 upstream 時改成 `openabdev/instance-mcp`。
-  - 怎麼挑版本：從 releases 清單裡過濾 `winpoc-v*` 且不是 draft 的，取最新的一個；有指定 `-Version` 就用指定的。
+  - 怎麼挑版本：從 releases 清單裡過濾 `v*`、不是 draft、而且附有 `oab-imcp-winpoc-<ver>-windows-amd64.zip`（`<ver>` = tag 去掉 `v`）的，依發布時間取最新的一個；有指定 `-Version` 就用指定的。沒有 Windows ZIP 的 release（例如作者較早的版本）一律略過。
   - 資產名稱照 POC 命名規則：`oab-imcp-winpoc-<ver>-windows-amd64.zip` 加上 `.sha256`。
   - 安裝程式的 exit code 原樣傳回。
 - **Windows 安裝程式（修改現有的 install-winpoc）**：
@@ -112,13 +114,14 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
   - VS Code（Copilot Chat）與 Insiders：VS Code 沒有移除用的 CLI，`--add-mcp` 的 JSON 參數經 PowerShell 5.1 傳給 `.cmd` 會被破壞引號，所以直接編輯使用者 `mcp.json`（`%APPDATA%\Code\User\mcp.json`、`%APPDATA%\Code - Insiders\User\mcp.json`）的 `servers.<name>`（`type: http`、`url`、`headers`），其餘內容保留，第一次修改前留備份；檔案無法解析（例如有註解）就不動它，只警告並印出要貼的片段。偵測依據是 PATH 上有 `code` / `code-insiders`。
   - Gemini CLI：`gemini mcp remove -s user` → `gemini mcp add -s user --transport http --header "Authorization: Bearer …" <name> <url>` → `gemini mcp list` 確認（Gemini 沒有 `get`；`~\.gemini\settings.json`）。指令依官方文件，開發機上的 Gemini CLI 安裝損壞，未實機驗證。
 - **Playwright 啟動腳本（修改）**：安裝路徑對齊安裝程式，修正跟實際行為不符的註解。
-- **Release workflow（新增，只給 fork 用）**：
-  - 用 `winpoc-v*` tag 或 workflow_dispatch 觸發，跑在 windows-latest。
-  - 用 MSVC 加 static CRT 執行 cargo release build，打包規則跟作者 release workflow 的 Windows job 一樣，版本號是 tag 去掉前綴。
-  - 用 prerelease 的形式建立 release，如果已經存在就覆蓋上傳。
-  - action 版本用 SHA 鎖定。
-  - 不設定 environment，因為作者的 release environment 只放行 `v*`，而且 fork 只有擁有者能推 tag。
-  - 送 upstream PR 時排除這個檔案，upstream 走作者的 release workflow。
+- **Release workflow（修改 `release.yml`，v0.5）**：
+  - 觸發條件不變：`v*` tag 或 workflow_dispatch。fork 用帶後綴的 tag（例如 `v0.8.0-winpoc.1`），不會佔用作者的正式版號。
+  - macOS job 加上 `if: github.repository_owner == 'openabdev'`：只在 upstream 執行。
+  - 新增 `fork-release` job（`if: github.repository_owner != 'openabdev'`，ubuntu）：建立 prerelease，取代 macOS job「建立 Release」的角色。它和 macOS job 的條件互斥，所以任何 repo 都只有一個 job 會建立 Release。
+  - Linux 與 Windows job 不改：照原本的設計等 Release 出現後再上傳，所以 fork 驗證到的就是 upstream 的真實流程。
+  - Windows job 用 MSVC 加 static CRT 編譯（windows-latest 預設 MSVC，加 `RUSTFLAGS=+crt-static`），並新增檢查：exe 不得匯入 VC runtime DLL。
+  - 刪除 v0.3 的 `winpoc-release.yml`。
+  - 送 upstream PR 時：`fork-release` job 和 macOS 的 `if:` 可以保留（在 upstream 不會改變行為，也方便其他 fork 驗證），或依作者意見移除。
 - **文件**：
   - 新增 Windows setup 指南，結構對照作者的 Linux setup 指南，裡面包含 AI 安裝一節。
   - repo 首頁 README 的 Quick start 只加一小段 Windows (POC) 連結。
@@ -155,7 +158,7 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 
 **切入點以外的部分**：
 
-- Release workflow：在 fork 推一個 `winpoc-v0.0.1-rc1` 實際跑一次，再用 setup（不帶 `-ApiBase`）裝這個真的 Release。這就是端到端驗收，同時也驗證 MSVC 版本。
+- Release workflow：在 fork 推一個 `v0.8.0-winpoc.1` 經由 `release.yml` 實際跑一次（`fork-release` 建立 prerelease，Linux 與 Windows job 上傳），再用 setup（不帶 `-ApiBase`）裝這個真的 Release。這就是端到端驗收，同時也驗證 MSVC 版本和併回 upstream 後的發布路徑。
 - 回歸測試：cargo 四項加 smoke.sh 照舊執行。這次不改 Rust，預期結果不會變。
 - 實機手動驗收：用乾淨帳號從 clone 雙擊一次走完、SmartScreen 的行為、`browser_navigate` 實際成功。這些都加進 POC 的手動驗收清單。
 
@@ -176,20 +179,20 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
 |---|---|---|
 | Q1 | 只註冊 Claude Code → **v0.4：Claude Code、Codex CLI、GitHub Copilot CLI、VS Code（含 Insiders）、Gemini CLI，偵測到就註冊；Codex token 走使用者環境變數** | 使用者決定（2026-10-14 擴大） |
 | Q2 | exe 從 GitHub Release 下載並驗證 sha256 | 使用者決定 |
-| Q3 | 另外新增 fork 專用的 release workflow | 使用者決定；fork 沒有 Apple secrets，作者的 workflow 跑不動 |
+| Q3 | 另外新增 fork 專用的 release workflow → **v0.5：改用 `release.yml` 本身，macOS job 只在 upstream 跑，fork 由 `fork-release` job 建立 prerelease** | 使用者決定（2026-10-14 改為驗證真實的併回路徑） |
 | Q4 | 從 repo 內的 setup 入口開始，加上 AI 安裝指南 | 使用者決定 |
 | Q5 | 偵測到 Node.js 才裝 Playwright | 使用者決定；作者 Linux 安裝程式也是有 node 才裝 |
 | D1 | Claude Code 註冊：POC 名稱、user scope、loopback、明文 token、預設開啟 | 作者 README 的 client 範例；loopback 加 bearer 已有 smoke 驗證 |
 | D2 | 安裝指南用獨立文件，README 只放連結 | 作者 Linux setup 指南加 README Quick start 的結構 |
 | D3 | setup 入口放在 scripts 目錄 | 作者的安裝腳本都在 scripts |
 | D4 | 預設 repo 集中設定在一處，可以覆寫 | 跟 POC 名稱一樣「集中在一處改」 |
-| D5 | release workflow 不設審批閘門、只給 fork 用 | 作者的 release environment 只放行 `v*` |
+| D5 | ~~release workflow 不設審批閘門、只給 fork 用~~ v0.5：沿用 `release.yml` 的 `release` environment；fork 沒有設定保護規則，所以不需要核准 | fork 上 environment 會自動建立、沒有保護規則 |
 | D6 | `@playwright/mcp@0.0.82` 固定版本 | 作者 macOS 和 Linux 用同一個版本 |
 | D7 | exe 不內建 install 子指令 | 作者各平台都用 pkg 或安裝腳本 |
 | D8 | 旗標命名為 `-NoBrowser` 和 `-NoClaudeCode` | 作者 Linux 安裝程式的 `--no-browser` |
 | T1 | 測試只用一個切入點：setup 加 `-ApiBase` 假伺服器加 Claude Code stub | 使用者同意，2026-10-14 |
 
-**送 upstream PR 時**：作者在 PR #51 規定社群 PR 要附 #openab-pty Discord 的討論連結；要排除 fork 專用的 release workflow；預設 repo 要改成 upstream。
+**送 upstream PR 時**：作者在 PR #51 規定社群 PR 要附 #openab-pty Discord 的討論連結；`release.yml` 裡的 `fork-release` job 可保留或依作者意見移除；預設 repo 要改成 upstream。
 
 **附帶發現**：Windows checkout 讓 21 個腳本出現只有檔案模式的差異。2026-10-08 已在這個 repo 設定 `core.fileMode false`，沒有 commit 任何模式變更。
 
