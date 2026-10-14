@@ -244,6 +244,7 @@ from the repo root. Each step has a check; stop at the first that fails and use 
 | `Claude Code: not found` / `not found: …` | That client is not on PATH | Install it and re-run setup (or paste the printed `claude mcp add …` line) |
 | Codex does not list the tools | The terminal predates `OAB_IMCP_WINPOC_TOKEN` | Open a new terminal, then start Codex |
 | `VS Code…: could not parse …mcp.json` | The file has comments | Paste the printed entry under `servers` yourself |
+| `Connected · tools fetch failed` / `Request timed out` right after install | The first request warms up the node and Playwright | Wait a few seconds and run `claude mcp get oab-imcp-winpoc` again; it settles to `✔ Connected` |
 | `claude mcp list` shows `Failed to connect` | Node not running | `-Status`; re-run setup; logs in `%LOCALAPPDATA%\oab-imcp-winpoc\logs` |
 | `node did not become healthy` | Port 8796 taken, or the exe was blocked | `netstat -ano \| findstr 8796`; check SmartScreen / Smart App Control below |
 | SmartScreen "Windows protected your PC", or the exe does not start | Unsigned POC build | **More info → Run anyway**, or allow it in Windows Security; Smart App Control may need to be off. Code signing is the author's release decision |
