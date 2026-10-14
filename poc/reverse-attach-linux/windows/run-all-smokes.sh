@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Run every Windows POC smoke in sequence (from WSL; builds for Windows first).
-# Prereq: `. windows/xenv.sh` toolchain (cargo zigbuild), a logged-in unlocked desktop.
+# Prereq: `. windows/xenv.sh` toolchain (cargo zigbuild), a logged-in unlocked desktop, and
+# Node.js on Windows for smoke_install's browser checks (first run downloads Chromium).
 set -u
 cd "$(dirname "$0")/.."
 . windows/xenv.sh
 echo "building for Windows…"; cargo zigbuild --release --target x86_64-pc-windows-gnu 2>&1 | grep -E '^error|Finished' | tail -1
 total_fail=0
-for s in smoke_windows smoke_reverse smoke_upstream smoke_switchboard smoke_install; do
+for s in smoke_windows smoke_reverse smoke_upstream smoke_switchboard smoke_setup smoke_install; do
   echo; echo "========== $s =========="
   bash "windows/$s.sh"; rc=$?
   [[ $rc -ne 0 ]] && total_fail=$((total_fail+1))
