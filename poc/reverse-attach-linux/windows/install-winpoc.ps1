@@ -4,15 +4,16 @@
 
     Usage:
       install-winpoc.ps1 -Install [-Token <str> | -AllowLogin <email>] [-Port 8796] [-ServePort 8445]
-                         [-NoBrowser] [-NoClaudeCode]
-      install-winpoc.ps1 -Uninstall [-Purge] [-NoClaudeCode]
+                         [-NoBrowser] [-Clients claude,codex,copilot,vscode,gemini | -NoClients]
+      install-winpoc.ps1 -Uninstall [-Purge] [-Clients ... | -NoClients]
       install-winpoc.ps1 -Status
 
     -Install also, unless opted out:
       browser     with Node.js on PATH: @playwright/mcp (pinned) + Chromium, a second logon task
                   serving it on loopback, and the node re-serving browser_* (--upstream)
-      Claude Code with `claude` on PATH: registers this node as a user-scope MCP server over
-                  loopback with the bearer token (otherwise prints the command to paste)
+      clients     every detected local MCP client (Claude Code, Codex CLI, GitHub Copilot CLI,
+                  VS Code / Insiders, Gemini CLI): registers this node over loopback with the
+                  bearer token; -Clients picks some, -NoClients none, -NoClaudeCode drops claude
     Re-running -Install updates in place and keeps the token.
 #>
 [CmdletBinding(DefaultParameterSetName='Status')]
@@ -27,7 +28,9 @@ param(
   [switch]$Purge,
   [switch]$SkipTailscale,
   [switch]$NoBrowser,
-  [switch]$NoClaudeCode,
+  [string[]]$Clients,       # default: every client in Get-ClientTable
+  [switch]$NoClients,
+  [switch]$NoClaudeCode,    # kept from v0.3: same as leaving claude out of -Clients
   [switch]$NoStart          # for CI/tests: create the task but do not start/serve
 )
 $ErrorActionPreference = 'Stop'
@@ -43,8 +46,8 @@ $TaskName= "$TaskPath$Name"
 $PwName  = "$Name-pw"
 $PwPort  = 8797
 $PwPkg   = '@playwright/mcp@0.0.82'   # same pin as poc/pw-mcp (macOS) and install-linux.sh
-$CcName  = $Name                      # Claude Code MCP server name
-$CcScope = 'user'
+$McpName = $Name                      # server name in every MCP client
+$CodexTokenVar = 'OAB_IMCP_WINPOC_TOKEN'  # user env var Codex reads the bearer token from
 $ProgDir = Join-Path $env:LOCALAPPDATA 'Programs\OpenAB-POC\imcp-winpoc'
 $DataDir = Join-Path $env:LOCALAPPDATA 'oab-imcp-winpoc'
 # ------------------------------------------------------------------------------------------
@@ -113,18 +116,21 @@ function Wait-Http([string]$url, [int]$tries, [scriptblock]$okWhen) {
   return $false
 }
 
-function Find-Claude {
-  # claude.exe (native installer) or claude.cmd (npm); like node/npm, skip .ps1 shims.
-  Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+function Find-Exe([string]$name) {
+  # claude.exe / codex.cmd / code.cmd ...; like node/npm, skip npm's .ps1 shims.
+  Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 }
 
 function Invoke-Quiet([string]$exe, [string[]]$argv, [string]$log) {
-  # Run a native tool with its output in $log; returns the exit code. Windows PowerShell
-  # turns redirected native stderr into errors, so relax the preference for the call.
+  # Run a native tool with its output in $log (and in $script:LastOut); returns the exit
+  # code. Windows PowerShell turns redirected native stderr into errors, so relax the
+  # preference for the call.
   $ErrorActionPreference = 'Continue'
   "> $exe $(($argv -join ' ') -replace 'Bearer \S+', 'Bearer ***')" | Out-File -Append -Encoding utf8 $log
-  & $exe @argv *>&1 | Out-File -Append -Encoding utf8 $log
-  return $LASTEXITCODE
+  $script:LastOut = & $exe @argv *>&1 | Out-String
+  $rc = $LASTEXITCODE
+  $script:LastOut | Out-File -Append -Encoding utf8 $log
+  return $rc
 }
 
 # ---- browser: @playwright/mcp as a second logon task, re-served by the node ---------------
@@ -180,52 +186,158 @@ function Install-Browser {
   return $true
 }
 
-# ---- Claude Code: the README's client pattern (`mcp add … --header "Authorization: Bearer …"`,
-# shown there for kiro-cli) applied to Claude Code over loopback ----------------------------
-function Get-ClaudeAddArgs([string]$tok) {
-  @('mcp', 'add', '--transport', 'http', '--scope', $CcScope, $CcName, $LocalUrl, '--header', "Authorization: Bearer $tok")
+# ---- MCP clients: the README's client pattern (`mcp add … --header "Authorization: Bearer …"`,
+# shown there for kiro-cli) applied to each local client over loopback. One row per client;
+# install and uninstall walk the same table, and any failure only warns. Pick is the name
+# -Clients selects it by (both VS Code rows answer to 'vscode'). A CLI row confirms by
+# finding the server name in its Verify output.
+function Get-ClientTable([string]$tok) {
+  $hdr = "Authorization: Bearer $tok"
+  @(
+    @{ Pick = 'claude'; Label = 'Claude Code'; Exe = 'claude'; Where = '~\.claude.json'; Paste = $true
+       Remove = @('mcp', 'remove', '--scope', 'user', $McpName)
+       Add    = @('mcp', 'add', '--transport', 'http', '--scope', 'user', $McpName, $LocalUrl, '--header', $hdr)   # --header is variadic: last
+       Verify = @('mcp', 'get', $McpName) }
+    @{ Pick = 'codex'; Label = 'Codex CLI'; Exe = 'codex'; Where = "user env var $CodexTokenVar"; TokenVar = $CodexTokenVar
+       Remove = @('mcp', 'remove', $McpName)
+       Add    = @('mcp', 'add', $McpName, '--url', $LocalUrl, '--bearer-token-env-var', $CodexTokenVar)   # its CLI takes no headers
+       Verify = @('mcp', 'get', $McpName) }
+    @{ Pick = 'copilot'; Label = 'GitHub Copilot CLI'; Exe = 'copilot'; Where = '~\.copilot\mcp-config.json'
+       Remove = @('mcp', 'remove', $McpName)
+       Add    = @('mcp', 'add', '--transport', 'http', $McpName, $LocalUrl, '--header', $hdr)
+       Verify = @('mcp', 'get', $McpName) }
+    @{ Pick = 'gemini'; Label = 'Gemini CLI'; Exe = 'gemini'; Where = '~\.gemini\settings.json'
+       Remove = @('mcp', 'remove', '-s', 'user', $McpName)
+       Add    = @('mcp', 'add', '-s', 'user', '--transport', 'http', '--header', $hdr, $McpName, $LocalUrl)   # order as in its docs
+       Verify = @('mcp', 'list') }   # gemini has no `mcp get`
+    # VS Code has no removal CLI, and --add-mcp's JSON loses its quotes on the way through
+    # Windows PowerShell to code.cmd, so the user mcp.json is edited directly.
+    @{ Pick = 'vscode'; Label = 'VS Code'; Exe = 'code'; McpJson = (Join-Path $env:APPDATA 'Code\User\mcp.json') }
+    @{ Pick = 'vscode'; Label = 'VS Code Insiders'; Exe = 'code-insiders'; McpJson = (Join-Path $env:APPDATA 'Code - Insiders\User\mcp.json') }
+  )
 }
 
-function Register-ClaudeCode {
-  if ($NoClaudeCode) { $Summary.Add("  Claude Code: skipped (-NoClaudeCode)"); return }
+function Get-SelectedClients {
+  # All clients unless -Clients names some. Through powershell -File, -Clients arrives as one
+  # "a,b" string; split it either way.
+  if ($NoClients -and $Clients) { throw "-Clients and -NoClients: pass one, not both" }
+  if ($NoClients) { return @() }
+  $known = @(Get-ClientTable '' | ForEach-Object { $_.Pick } | Select-Object -Unique)
+  $sel = if ($Clients) { @($Clients | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ }) } else { $known }
+  foreach ($c in $sel) { if ($known -notcontains $c) { throw "unknown client '$c' in -Clients (known: $($known -join ', '))" } }
+  if ($NoClaudeCode) { $sel = @($sel | Where-Object { $_ -ne 'claude' }) }
+  return $sel
+}
+
+function Read-McpJson([string]$path) {
+  # The parsed file, or $null when there is none; throws when it is not plain JSON (VS Code
+  # allows comments, Windows PowerShell's parser does not), so it is never rewritten then.
+  # VS Code writes UTF-8 without a BOM, which Windows PowerShell would read as ANSI.
+  if (-not (Test-Path -LiteralPath $path)) { return $null }
+  $raw = Get-Content -Raw -Encoding UTF8 -LiteralPath $path
+  if (-not $raw -or -not $raw.Trim()) { return $null }
+  return ($raw | ConvertFrom-Json)
+}
+
+function Write-McpJson([string]$path, $j) {
+  New-Item -ItemType Directory -Force (Split-Path -Parent $path) | Out-Null
+  $bak = "$path.$Name.bak"   # the user's original, once
+  if ((Test-Path -LiteralPath $path) -and -not (Test-Path -LiteralPath $bak)) { Copy-Item -LiteralPath $path $bak }
+  [IO.File]::WriteAllText($path, ($j | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding $false))
+}
+
+function Register-VsCode($row, [string]$tok) {
+  # Returns '' when the server is in the file afterwards, else why not.
+  try { $j = Read-McpJson $row.McpJson } catch { return "could not parse $($row.McpJson) (comments?); left it alone" }
+  try {
+    if ($null -eq $j) { $j = [pscustomobject]@{ servers = [pscustomobject]@{}; inputs = @() } }
+    if ($null -eq $j.PSObject.Properties['servers'] -or $null -eq $j.servers) { $j | Add-Member -Force -NotePropertyName servers -NotePropertyValue ([pscustomobject]@{}) }
+    $j.servers.PSObject.Properties.Remove($McpName)
+    $j.servers | Add-Member -NotePropertyName $McpName -NotePropertyValue ([pscustomobject]@{
+      type = 'http'; url = $LocalUrl; headers = [pscustomobject]@{ Authorization = "Bearer $tok" } })
+    Write-McpJson $row.McpJson $j
+    if ($null -eq (Read-McpJson $row.McpJson).servers.PSObject.Properties[$McpName]) { return "the entry is missing after writing $($row.McpJson)" }
+    return ''
+  } catch { return "could not update $($row.McpJson): $($_.Exception.Message)" }
+}
+
+function Unregister-VsCode($row) {
+  try {
+    $j = Read-McpJson $row.McpJson
+    if ($null -eq $j -or $null -eq $j.servers -or $null -eq $j.servers.PSObject.Properties[$McpName]) { return }
+    $j.servers.PSObject.Properties.Remove($McpName)
+    Write-McpJson $row.McpJson $j
+    Write-Host "removed $($row.Label) server $McpName"
+  } catch { Write-Warning "$($row.Label): could not update $($row.McpJson); remove '$McpName' from it by hand" }
+}
+
+function Register-Clients([string[]]$sel) {
+  if ($NoClients) { $Summary.Add("  MCP clients: skipped (-NoClients)"); return }
+  if (-not $sel) { $Summary.Add("  MCP clients: none selected"); return }
   if ($AllowLogin -or -not (Test-Path $TokenF)) {
-    $Summary.Add("  Claude Code: not registered - -AllowLogin needs a Tailscale identity, and the loopback URL")
+    $Summary.Add("  MCP clients: not registered - -AllowLogin needs a Tailscale identity, and the loopback URL")
     $Summary.Add("               carries no Tailscale identity; register the tailnet URL by hand")
     return
   }
   $tok = (Get-Content -Raw $TokenF).Trim()
-  $addArgs = Get-ClaudeAddArgs $tok
-  $claude = Find-Claude
-  if (-not $claude) {
-    $paste = 'claude ' + (Join-Quoted $addArgs)
-    $Summary.Add("  Claude Code: not found; after installing it, run:")
-    $Summary.Add("      $paste")
-    return
+  $log = Join-Path $LogDir 'clients.log'
+  $missing = @(); $stored = @(); $restart = $false
+  foreach ($row in @(Get-ClientTable $tok | Where-Object { $sel -contains $_.Pick })) {
+    $exe = Find-Exe $row.Exe
+    if (-not $exe) {
+      $missing += $row.Label
+      if ($row.Paste) {
+        $Summary.Add("  $($row.Label): not found; after installing it, run:")
+        $Summary.Add("      $($row.Exe) $(Join-Quoted $row.Add)")
+      }
+      continue
+    }
+    if ($row.McpJson) {
+      $why = Register-VsCode $row $tok
+      if (-not $why) { $Summary.Add("  $($row.Label): registered '$McpName' ($($row.McpJson))"); $stored += $row.McpJson }
+      else {
+        Write-Warning "$($row.Label): $why"
+        $Summary.Add("  $($row.Label): $why; add under ""servers"":")
+        $Summary.Add("      ""$McpName"": { ""type"": ""http"", ""url"": ""$LocalUrl"", ""headers"": { ""Authorization"": ""Bearer $tok"" } }")
+      }
+      continue
+    }
+    [void](Invoke-Quiet $exe.Source $row.Remove $log)   # re-runs replace, never duplicate
+    if ($row.TokenVar) { [Environment]::SetEnvironmentVariable($row.TokenVar, $tok, 'User') }
+    $rc = Invoke-Quiet $exe.Source $row.Add $log
+    if ($rc -ne 0) {
+      if ($row.TokenVar) { [Environment]::SetEnvironmentVariable($row.TokenVar, $null, 'User') }   # no token left behind
+      Write-Warning "$($row.Exe) mcp add failed (exit $rc; see $log)"
+      $Summary.Add("  $($row.Label): FAILED to register (see $log)")
+      continue
+    }
+    $rc = Invoke-Quiet $exe.Source $row.Verify $log
+    $confirmed = $rc -eq 0 -and $script:LastOut -match [regex]::Escape($McpName)
+    if (-not $confirmed) { Write-Warning "$($row.Exe) did not confirm $McpName (exit $rc; see $log)" }
+    $Summary.Add("  $($row.Label): registered '$McpName' ($($row.Where))$(if (-not $confirmed) { ' - not confirmed, see ' + $log })")
+    $stored += $row.Where
+    if ($row.TokenVar) { $restart = $true }
   }
-  $log = Join-Path $LogDir 'claude-code.log'
-  [void](Invoke-Quiet $claude.Source @('mcp', 'remove', '--scope', $CcScope, $CcName) $log)   # re-runs replace, never duplicate
-  $rc = Invoke-Quiet $claude.Source $addArgs $log
-  if ($rc -ne 0) {
-    Write-Warning "claude mcp add failed (exit $rc; see $log)"
-    $Summary.Add("  Claude Code: FAILED to register (see $log)")
-    return
-  }
-  $rc = Invoke-Quiet $claude.Source @('mcp', 'get', $CcName) $log
-  if ($rc -ne 0) { Write-Warning "claude mcp get $CcName did not confirm the server (exit $rc; see $log)" }
-  $Summary.Add("  Claude Code: registered '$CcName' ($CcScope scope, $LocalUrl)$(if ($rc -ne 0) { ' - not confirmed, see ' + $log })")
-  $Summary.Add("               note: the token is stored in plain text in Claude Code's user config (~\.claude.json)")
+  if ($missing) { $Summary.Add("  not found: $($missing -join ', ')") }
+  if ($stored) { $Summary.Add("  note: the bearer token is stored in plain text in: $($stored -join '; ')") }
+  if ($restart) { $Summary.Add("        restart open terminals so Codex sees $CodexTokenVar") }
 }
 
-function Unregister-ClaudeCode {
-  if ($NoClaudeCode) { return }
-  $claude = Find-Claude
-  if (-not $claude) { return }
+function Unregister-Clients {
+  # Every client, whatever -Clients said at install time; -NoClients leaves them all alone.
+  if ($NoClients) { return }
   $log = Join-Path $env:TEMP "$Name-uninstall.log"
-  $rc = Invoke-Quiet $claude.Source @('mcp', 'remove', '--scope', $CcScope, $CcName) $log
-  if ($rc -eq 0) { Write-Host "removed Claude Code server $CcName" }
+  foreach ($row in @(Get-ClientTable '')) {
+    if ($row.TokenVar) { [Environment]::SetEnvironmentVariable($row.TokenVar, $null, 'User') }
+    if ($row.McpJson) { Unregister-VsCode $row; continue }   # the file may outlive `code` on PATH
+    $exe = Find-Exe $row.Exe
+    if (-not $exe) { continue }
+    if ((Invoke-Quiet $exe.Source $row.Remove $log) -eq 0) { Write-Host "removed $($row.Label) server $McpName" }
+  }
 }
 
 function Do-Install {
+  $sel = @(Get-SelectedClients)   # a bad -Clients fails before anything changes
   if (-not $Token -and -not $AllowLogin -and -not (Test-Path $TokenF)) {
     # A POC default so the node can start; a real deploy passes -Token or -AllowLogin.
     $Token = -join ((48..57)+(97..102) | Get-Random -Count 48 | ForEach-Object {[char]$_})
@@ -270,7 +382,7 @@ function Do-Install {
       Write-Host "      tailscale serve --bg --https=$ServePort http://127.0.0.1:$Port"
     }
   }
-  Register-ClaudeCode
+  Register-Clients $sel
 
   Write-Host ""
   Write-Host "================ ready ================"
@@ -284,7 +396,7 @@ function Do-Install {
 
 function Do-Uninstall {
   Stop-Running
-  Unregister-ClaudeCode
+  Unregister-Clients
   Remove-Item -Recurse -Force $ProgDir -ErrorAction SilentlyContinue
   if ($Purge) {
     # token, grants, logs, and the browser pieces: pw-mcp (install), pw-profile, pw-output

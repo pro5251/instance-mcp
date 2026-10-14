@@ -2,12 +2,12 @@
 # Verifies the setup bootstrap's release handling through its -ApiBase seam (fake GitHub):
 # newest winpoc-v* (skipping drafts and other tags), -Version, sha256 mismatch, no release,
 # API failures, -ZipPath offline, and the installer's exit code passed through. Installs use
-# -NoStart -NoBrowser -NoClaudeCode so each run is quick; smoke_install.sh covers the node.
+# -NoStart -NoBrowser -NoClients so each run is quick; smoke_install.sh covers the node.
 set -u
 cd "$(dirname "$0")/.."
 . windows/setup_fixture.sh
 API="-ApiBase $GH -Repo test/winpoc"
-FAST="-NoStart -NoBrowser -NoClaudeCode -SkipTailscale -Token poc-smoke-$RANDOM"
+FAST="-NoStart -NoBrowser -NoClients -SkipTailscale -Token poc-smoke-$RANDOM"
 uninst(){ setup -ZipPath "$(wslpath -w "$WIN_DIR/offline.zip")" -Uninstall -Purge >/dev/null; }
 trap 'uninst; fixture_cleanup' EXIT
 uninst
