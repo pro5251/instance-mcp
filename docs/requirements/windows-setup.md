@@ -1,188 +1,183 @@
-# Windows 一步安裝 + Claude Code 自動註冊（spec v0.2）
+# Windows 一步安裝 + Claude Code 自動註冊（spec v0.3）
 
-> Recorded 2026-10-08; open questions resolved 2026-10-14 against the author's conventions (§12).
+> Recorded 2026-10-08; decisions settled 2026-10-14 against the author's conventions; rewritten
+> to the to-spec template 2026-10-14.
 
-**Status:** ready-for-agent（§1–§4 使用者決定；§12 依作者做法定案；下一步 `/to-tickets`）
+**Status:** ready-for-agent
 
-**相關：** `.scratch/windows-poc/spec.md`（v0.4，名稱依 §13.2）、tickets 11（Playwright）、14（packaging）
-
----
-
-## 1. 背景與問題
-
-2026-10-08 在 repo 內直接雙擊 `poc/reverse-attach-linux/windows/install.cmd` 失敗：
-
-```
-missing D:\instance-mcp\poc\reverse-attach-linux\windows\oab-imcp-winpoc.exe beside this script
-```
-
-根因：`install.cmd` → `install-winpoc.ps1:51-52` 要求 exe 在腳本旁，但 exe 只存在於 release ZIP（`release.yml:253-265` 編 `reverse-attach.exe` 改名後打包）。repo 本身沒有 exe，所以從 clone 下來的 repo 無法安裝。
-
-同時查到的既有缺口：
-
-| # | 缺口 | 位置 |
-|---|---|---|
-| G1 | repo 無 exe；`install.cmd` 只能在 ZIP 內用 | `install-winpoc.ps1:51-52` |
-| G2 | fork `pro5251/instance-mcp` 沒有任何 Release；`release.yml` 的 `windows` job 等 macOS job 建 release（`:156`），fork 無 Apple secrets（`:32-40`）→ Windows ZIP 永遠發不出來；MSVC 版因此從未編過 | `.github/workflows/release.yml` |
-| G3 | `browser_*` 在 Windows 沒接通：安裝腳本不做 `npm install @playwright/mcp`／`npx playwright install chromium`（與 `pw-mcp.ps1:3-4` 註解不符）；無 Task 啟動 `pw-mcp.ps1`；node Task 沒帶 `--upstream` | `install-winpoc.ps1`、`pw-mcp.ps1` |
-| G4 | `windows/README.md` 宣稱「node picks up `pw-mcp.ps1` automatically」，與實作不符 | `windows/README.md` |
-| G5 | 安裝只印 URL/token，不設定任何 MCP client | `install-winpoc.ps1:93-98` |
-
-背景補充：Playwright browser upstream 是作者既有功能（macOS `poc/pw-mcp/` 0.1.0、Linux #29 以 `MCP_UPSTREAM` env）。Windows 用 `--upstream` 旗標因 Scheduled Task 不繼承環境變數（`install-winpoc.ps1:56-57`）。
-
-## 2. 目標
-
-**誰：** 拿到這個 repo（clone，不是 ZIP）的 Windows 使用者／測試者；不假設有 Rust、MSVC、gh。
-
-**成功標準：**
-1. 雙擊 `scripts\setup-windows.cmd`（或請 AI 照 `docs/windows-setup.md` 指引執行），無需 admin。
-2. 結束時：node 健康（`/healthz` = ok）、開機自動啟動、token 已產生並保留。
-3. Claude Code 已自動註冊此 node，`claude mcp list` 可見且連線成功。
-4. 有 Node.js 時 `browser_*` 可用；沒有時其餘工具照常，印提示。
-5. 可重複執行（更新）與可完整移除。
-
-**非目標：** exe 自身安裝子指令（D7）；Claude Desktop／OpenAB Connect 註冊；code signing；自動安裝 Rust/MSVC 或 Node.js。
-
-## 3. 硬性限制（CLAUDE.md）
-
-- 不動 macOS（Swift）與 Linux 行為；**不改作者的 `release.yml`**、不改 Rust 程式碼。
-- 名稱依 `.scratch/windows-poc/spec.md` §13.2 POC 名稱。
-- 回歸門檻不退步：`cargo fmt --check`、`cargo clippy --release -- -D warnings`、`cargo test --release`（18 passed）、`smoke.sh`（48/48）。
-- 不經詢問不 push；功能分支 `feat/windows-setup` 開發。
-
-## 4. 使用者已決定事項（2026-10-08）
-
-| 問題 | 決定 |
-|---|---|
-| Q1 註冊哪個 MCP client | **Claude Code** only |
-| Q2 exe 來源 | **從 GitHub Release 下載**（fork `pro5251/instance-mcp`），sha256 驗證 |
-| Q3 Release 怎麼產生 | **新增獨立 workflow** `release-windows-poc.yml`，`winpoc-v*` tag 或 `workflow_dispatch` 觸發，自己 `gh release create`；不動 `release.yml` |
-| Q4 安裝入口 | **repo 內 `setup-windows.cmd`**（位置見 D3）+ AI 安裝指引（位置見 D2）；只改 PowerShell/cmd |
-| Q5 Playwright | **一起修；偵測到 node/npm 才裝**，否則跳過並提示 |
-
-補充：Release workflow 只在推 `winpoc-v*` tag 或手動觸發時跑，一般 push 不跑。使用者拿到的是最新 Release；安裝一律用 ZIP 內的 `install-winpoc.ps1`，確保 exe 與安裝腳本同版。
+**相關：** Windows POC spec v0.4（本機 `.scratch/windows-poc/spec.md`，名稱依其 §13.2 POC 名稱）、POC tickets 11（Playwright upstream）、14（packaging）、15（手動驗收）
 
 ---
 
-## 5. 架構
+## Problem Statement
 
-```
-[repo] scripts\setup-windows.cmd ──► scripts\setup-windows.ps1 (bootstrap)
-          │ 1. 查 <Repo> 最新 winpoc-v* release（GitHub REST API，免 gh）
-          │ 2. 下載 ZIP + .sha256 → 比對 → 解壓到 %TEMP%\oab-imcp-winpoc-<ver>\
-          ▼
-   ZIP 內 install-winpoc.ps1 -Install          （ZIP 內 install.cmd 走同一入口）
-          │ a. 既有：exe、token、Scheduled Task、/healthz、tailscale serve
-          │ b. 新：browser（§7），預設開，-NoBrowser 關
-          │ c. 新：Claude Code 註冊（§8），預設開，-NoClaudeCode 關
-          ▼
-   印 ready 摘要（URL、token 位置、browser 狀態、Claude Code 狀態）
-```
+拿到這個 repo 的 Windows 使用者，沒辦法把 hands node 裝起來，也沒辦法讓本機的 AI client 直接用它。
 
-### 5.1 元件
+- 在 repo 裡雙擊 Windows 安裝入口會直接失敗：「missing … oab-imcp-winpoc.exe beside this script」。安裝程式要求 exe 在旁邊，但 exe 只存在於 release ZIP，repo 裡沒有。
+- 想要 release ZIP 也拿不到：fork 從來沒有發過 Release。既有的 release workflow 中，Windows job 要等 macOS job 建好 Release，但 macOS job 需要 fork 沒有的 Apple 簽章 secrets，所以 Windows ZIP 永遠發不出來。正式發行用的 MSVC 版本也因此從來沒有編過。
+- 就算裝好了，瀏覽器工具（`browser_*`）也接不起來：安裝程式不會安裝 Playwright MCP，不會啟動它，也不會讓 node 轉發給它；但 Windows README 寫的是「會自動接上」。
+- 裝好之後，使用者還要自己抄 URL 和 token，手動設定 Claude Code。
+- 使用者不一定有 Rust、MSVC 或 gh，也不想研究這些。
 
-| 檔案 | 新/改 | 職責 |
+## Solution
+
+使用者 clone repo 之後，雙擊一個 setup 入口就好（或請 AI 照安裝指南執行）。setup 會：
+
+1. 從 fork 的 GitHub Release 下載最新的 Windows POC ZIP，比對 sha256 後解壓。
+2. 執行 ZIP 裡的安裝程式，保證 exe 和安裝程式是同一版。安裝程式會：裝好 node、開機自動啟動、產生或保留 token、確認健康狀態、有 Tailscale 時設定 `tailscale serve`。
+3. 偵測到 Node.js 時，安裝固定版本的 Playwright MCP，用獨立的開機工作啟動它，並讓 node 把 `browser_*` 轉發過去；沒有 Node.js 就跳過並印出提示。
+4. 偵測到 Claude Code 時，自動把這台 node 註冊成 user scope 的 MCP server（本機 loopback URL 加 bearer token）；找不到就印出可以直接貼上的指令。
+5. 最後印出摘要：URL、token 位置、browser 狀態、Claude Code 狀態。
+
+Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或手動觸發時才會跑。作者的 release workflow 不改。
+
+## User Stories
+
+1. 身為 clone 了 repo 的 Windows 使用者，我想雙擊一個檔案就裝好 hands node，這樣不用了解 Rust、MSVC 或 release 流程。
+2. 身為 Windows 使用者，我想要不需要系統管理員權限就能完成安裝，這樣在公司電腦上也能用。
+3. 身為 Windows 使用者，我想要安裝程式自動抓最新版本，這樣不用自己去 Releases 頁面找檔案。
+4. 身為 Windows 使用者，我想要能指定安裝某個版本，這樣新版有問題時可以退回舊版。
+5. 身為 Windows 使用者，我想要安裝程式在下載後先驗證 sha256，這樣被竄改或下載不完整的檔案不會被安裝。
+6. 身為 Windows 使用者，我想要雜湊不符時安裝立刻中止並刪掉下載的檔案，這樣不會留下可疑的檔案。
+7. 身為沒有網路，或碰到 GitHub API rate limit 的使用者，我想要能指定一個本機的 ZIP 來安裝，這樣離線也能裝。
+8. 身為 Windows 使用者，我想要找不到 Release 時看到清楚的錯誤訊息和下一步建議，這樣不會卡在看不懂的 PowerShell 例外。
+9. 身為 Windows 使用者，我想要下載的檔案被移除「來自網際網路」標記，這樣 SmartScreen 比較不會擋。
+10. 身為 Windows 使用者，我想要 node 每次登入都自動啟動，這樣重開機後還能用。
+11. 身為 Windows 使用者，我想要重新安裝時保留原本的 token，這樣已經設定好的 client 不會失效。
+12. 身為 Windows 使用者，我想要安裝完成時看到 node 已經是健康狀態，這樣能確定裝好了。
+13. 身為有裝 Node.js 的使用者，我想要瀏覽器工具自動設定好，這樣 agent 可以操作瀏覽器。
+14. 身為沒有裝 Node.js 的使用者，我想要其他工具照常可用，並看到「裝 Node.js 後重跑 setup」的提示，這樣不會因為缺少選用元件而整個安裝失敗。
+15. 身為使用者，我想要用 `-NoBrowser` 關掉瀏覽器工具，這樣不需要時可以省下 Chromium 的下載。
+16. 身為使用者，我想要 Playwright 安裝失敗時只看到警告，核心工具仍然裝好，這樣主要功能不受選用功能影響。
+17. 身為使用者，我想要 Playwright 固定在跟 macOS、Linux 相同的版本，這樣三個平台的 `browser_*` 行為一致。
+18. 身為 Claude Code 使用者，我想要安裝完 Claude Code 就已經註冊好這台 node，這樣可以直接呼叫工具。
+19. 身為 Claude Code 使用者，我想要註冊在 user scope，這樣在任何專案目錄都能用。
+20. 身為 Claude Code 使用者，我想要重複安裝不會產生重複或衝突的註冊項目，這樣設定保持乾淨。
+21. 身為 Claude Code 使用者，我想要註冊名稱是 POC 專用名稱，這樣不會覆蓋我自己的 MCP 設定，日後的正式版也不會跟它撞名。
+22. 身為沒有 Claude Code 的使用者，我想要看到一行可以直接貼上的註冊指令，這樣之後裝了 Claude Code 也能自己加。
+23. 身為使用者，我想要用 `-NoClaudeCode` 跳過註冊，這樣我可以自己管理 client 設定。
+24. 身為用 Tailscale 身分登入（沒有 token）的使用者，我想要安裝程式跳過 Claude Code 註冊並告訴我原因，這樣不會註冊一個連不上的項目。
+25. 身為使用者，我想要摘要提醒我 token 是以明文存在 Claude Code 的設定裡，這樣我知道它的安全邊界。
+26. 身為使用者，我想要解除安裝時一併移除 node、Playwright 工作和 Claude Code 註冊，這樣電腦上不會留下殘骸。
+27. 身為使用者，我想要用 `-Purge` 連 token、grants 和瀏覽器 profile 一起刪掉，這樣可以完全清除。
+28. 身為使用者，我想要重新執行 setup 就能更新到新版，這樣更新跟安裝是同一個步驟。
+29. 身為請 AI 代為安裝的使用者，我想要 repo 裡有一份 AI 照做就能完成安裝的指南，裡面包含驗證步驟和常見錯誤的處理方式，這樣 AI 不用自己摸索。
+30. 身為 AI agent，我想要安裝指南有明確的成功判斷（健康檢查回 ok、`claude mcp list` 出現 Connected），這樣我能確定安裝完成。
+31. 身為 repo 維護者，我想要推一個 `winpoc-v*` tag 就自動產生 Windows ZIP Release，這樣不用在本機手動打包。
+32. 身為 repo 維護者，我想要一般 push 不會觸發 release，這樣只有我決定要發布時才會發。
+33. 身為 repo 維護者，我想要 Release 是用 MSVC 加 static CRT 編的，這樣使用者不需要另外裝 VC runtime，正式發行用的建置方式也能被驗證到。
+34. 身為 repo 維護者，我想要作者的 release workflow 一行都不改，這樣不會影響作者的 macOS 和 Linux 發行。
+35. 身為 repo 維護者，我想要預設的下載來源 repo 只在一個地方設定，這樣日後併入 upstream 時只要改一處。
+36. 身為 repo 維護者，我想要 Windows README 跟實際行為一致，這樣不會誤導使用者。
+37. 身為 repo 維護者，我想要 repo 首頁的 Quick start 有 Windows 的入口連結，這樣使用者找得到安裝方式。
+38. 身為作者，我想要 Linux 和 macOS 的行為、介面、回歸測試全部不變，這樣 Windows 的工作不會破壞已經發行的平台。
+
+## Implementation Decisions
+
+**模組**
+
+- **Setup bootstrap（新增，放在 repo 的 scripts 目錄）**：有一個雙擊入口和一個 PowerShell bootstrap。bootstrap 只負責四件事：找到版本 → 下載 → 驗證 → 解壓，然後把剩下的參數原封不動交給 ZIP 裡的安裝程式。它本身不包含任何安裝邏輯。
+  - 介面：`-Version <tag>`、`-ZipPath <path>`、`-Repo <owner/name>`、`-ApiBase <url>`（測試用，預設是 GitHub API），其餘參數直接轉給安裝程式。
+  - 預設的 repo 寫在腳本開頭的變數區，POC 期間是 fork，併入 upstream 時改成 `openabdev/instance-mcp`。
+  - 怎麼挑版本：從 releases 清單裡過濾 `winpoc-v*` 且不是 draft 的，取最新的一個；有指定 `-Version` 就用指定的。
+  - 資產名稱照 POC 命名規則：`oab-imcp-winpoc-<ver>-windows-amd64.zip` 加上 `.sha256`。
+  - 安裝程式的 exit code 原樣傳回。
+- **Windows 安裝程式（修改現有的 install-winpoc）**：
+  - 新增 browser 段和 Claude Code 段，兩段都預設開啟，分別用 `-NoBrowser`、`-NoClaudeCode` 關閉。命名對照作者 Linux 安裝程式的 `--no-browser`。
+  - 解除安裝要對稱：移除 Playwright 工作和 Claude Code 註冊。`-Purge` 時再刪掉 Playwright 的安裝目錄、瀏覽器 profile 和輸出目錄。
+  - ZIP 裡原本的雙擊入口照舊走同一個安裝程式。
+- **Browser 段**：
+  - 找不到 node 或 npm 就跳過。
+  - 用 `--save-exact` 把 `@playwright/mcp@0.0.82` 裝到 POC 資料目錄底下，再安裝 Playwright 的 Chromium。版本跟 macOS、Linux 用同一個。
+  - 註冊 POC 名稱的 Playwright Scheduled Task，設定和 node 的 Task 相同，以隱藏視窗的 PowerShell 執行 Playwright 啟動腳本。
+  - node 的 Task 參數加上 `--upstream browser=http://127.0.0.1:8797/mcp`。用參數而不用環境變數，是因為 Scheduled Task 不會繼承環境變數。
+  - 任何一步失敗都只發出警告：不加 `--upstream`，也不中止整個安裝。
+- **Claude Code 段**：
+  - 這一段是把作者 README 裡的 client 範例（`mcp add … --header "Authorization: Bearer …" --scope global`）自動化。
+  - 名稱用 POC 名稱 `oab-imcp-winpoc`，scope 是 `user`，URL 用本機 loopback `http://127.0.0.1:8796/mcp`，header 帶 bearer token。
+  - 為了可以重複執行：先移除同名項目（忽略錯誤），再新增，最後用 get 確認。驗證失敗只警告。
+  - 找不到 `claude` 時，印出可以直接貼上的指令。
+  - `-AllowLogin` 模式下沒有 token，所以不註冊並說明原因：走 loopback 時不會帶 Tailscale 身分。
+- **Playwright 啟動腳本（修改）**：安裝路徑對齊安裝程式，修正跟實際行為不符的註解。
+- **Release workflow（新增，只給 fork 用）**：
+  - 用 `winpoc-v*` tag 或 workflow_dispatch 觸發，跑在 windows-latest。
+  - 用 MSVC 加 static CRT 執行 cargo release build，打包規則跟作者 release workflow 的 Windows job 一樣，版本號是 tag 去掉前綴。
+  - 用 prerelease 的形式建立 release，如果已經存在就覆蓋上傳。
+  - action 版本用 SHA 鎖定。
+  - 不設定 environment，因為作者的 release environment 只放行 `v*`，而且 fork 只有擁有者能推 tag。
+  - 送 upstream PR 時排除這個檔案，upstream 走作者的 release workflow。
+- **文件**：
+  - 新增 Windows setup 指南，結構對照作者的 Linux setup 指南，裡面包含 AI 安裝一節。
+  - repo 首頁 README 的 Quick start 只加一小段 Windows (POC) 連結。
+  - Windows README 修正「自動接上 Playwright」這句錯誤說明，並指向新的指南。
+
+**限制**
+
+- 不改 Rust 程式碼，不改作者的 release workflow，不改 macOS 和 Linux 的任何行為。
+- 所有對外名稱都用 POC 名稱，並集中在腳本開頭的變數區。
+- 回歸測試門檻不可退步：cargo fmt、clippy -D warnings、cargo test（基準 18 passed）、smoke.sh（基準 48/48）。
+
+## Testing Decisions
+
+**什麼是好的測試**：只透過使用者看得到的入口來驗證外部行為，也就是執行一次 setup，然後檢查系統狀態、HTTP 回應和 client 設定。不測 PowerShell 的內部函式，不 mock 內部模組。
+
+**測試切入點（只用一個）**：Setup bootstrap 的入口，配合 `-ApiBase` 指向本機的假 GitHub 伺服器。
+
+- 假伺服器提供 releases JSON、ZIP 和 sha256，可以測到這些情境：挑最新的 `winpoc-v*`、`-Version` 指定版本、略過 draft、雜湊不符時中止並刪檔、找不到 release 時的錯誤訊息。
+- 假的 Claude Code：在 PATH 最前面放一個 `claude` stub，把收到的參數記到檔案。用它驗證 remove → add → get 的順序和參數，並確認不會改到真正的 Claude Code 設定。
+- 每次測試執行一次 setup，接著從外部檢查：
+  - 兩個 Scheduled Task 是否存在、設定是否正確
+  - 有 Node.js 時，node Task 是否帶 `--upstream`
+  - 健康檢查是否回 ok
+  - `tools/list` 是否有 9 個工具，有 Node.js 時再加上 `browser_*`
+  - Claude Code stub 的紀錄
+- 解除安裝的對稱性：安裝後解除安裝，確認兩個 Task 和 Claude Code 註冊都不在了；`-Purge` 時資料目錄也要一起消失。
+- `-ZipPath` 只做最基本的檢查，確認離線路徑可以裝起來。它會跳過下載和驗證，所以不當作主要的測試路徑。
+
+**沿用的既有範例**：
+
+- 擴充現有的 Windows install smoke 腳本：它從 WSL 驅動 Windows 端的安裝程式，用 curl 檢查健康狀態和 tools 數量，也會檢查 Task 的設定和 token 的 DACL。這次把它的呼叫對象往上移到 setup bootstrap。
+- 假伺服器的寫法沿用現有的 Python mock，也就是 mock upstream 和 mock switchboard 的寫法。
+- 照舊用 run-all-smokes 統一執行。
+
+**切入點以外的部分**：
+
+- Release workflow：在 fork 推一個 `winpoc-v0.0.1-rc1` 實際跑一次，再用 setup（不帶 `-ApiBase`）裝這個真的 Release。這就是端到端驗收，同時也驗證 MSVC 版本。
+- 回歸測試：cargo 四項加 smoke.sh 照舊執行。這次不改 Rust，預期結果不會變。
+- 實機手動驗收：用乾淨帳號從 clone 雙擊一次走完、SmartScreen 的行為、`browser_navigate` 實際成功。這些都加進 POC 的手動驗收清單。
+
+## Out of Scope
+
+- 讓 exe 本身內建 `install` 子指令，或做 MSI / winget 套件（這些屬於作者的發行決定，跟 code signing 一樣）。
+- 註冊 Claude Desktop、OpenAB Connect 或其他 MCP client。
+- Code signing。
+- 自動安裝 Rust、MSVC 或 Node.js。
+- 修改作者的 release workflow，或在 upstream 發行 Windows 版本。
+- 更改 POC 名稱，或改用 §13.2 正式名稱（要等作者確認）。
+
+## Further Notes
+
+**決策紀錄（2026-10-14，參考作者做法定案；upstream main 為 `f456d04` 0.8.0，與本機一致）**
+
+| # | 決定 | 依據 |
 |---|---|---|
-| `scripts/setup-windows.cmd` | 新 | 雙擊入口；`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0setup-windows.ps1" %*`；結尾 `pause` |
-| `scripts/setup-windows.ps1` | 新 | 只負責「取得正確版本 ZIP → 驗證 → 解壓 → 呼叫 ZIP 內 installer」；不含安裝邏輯 |
-| `.github/workflows/release-windows-poc.yml` | 新（fork 專用） | 編譯、打包、建 release、上傳（§10） |
-| `poc/reverse-attach-linux/windows/install-winpoc.ps1` | 改 | 加 browser 段、Claude Code 段；uninstall 對稱 |
-| `poc/reverse-attach-linux/windows/pw-mcp.ps1` | 改 | 對齊安裝路徑；修正註解 |
-| `poc/reverse-attach-linux/windows/README.md` | 改 | 修 G4；指向 `docs/windows-setup.md` |
-| `docs/windows-setup.md` | 新 | 完整安裝指南 + AI 安裝指引（§9），對應作者的 `docs/linux-setup.md` |
-| `README.md` | 改（小） | Quick start 加一段 **Windows (POC)**，連到 `docs/windows-setup.md` |
+| Q1 | 只註冊 Claude Code | 使用者決定 |
+| Q2 | exe 從 GitHub Release 下載並驗證 sha256 | 使用者決定 |
+| Q3 | 另外新增 fork 專用的 release workflow | 使用者決定；fork 沒有 Apple secrets，作者的 workflow 跑不動 |
+| Q4 | 從 repo 內的 setup 入口開始，加上 AI 安裝指南 | 使用者決定 |
+| Q5 | 偵測到 Node.js 才裝 Playwright | 使用者決定；作者 Linux 安裝程式也是有 node 才裝 |
+| D1 | Claude Code 註冊：POC 名稱、user scope、loopback、明文 token、預設開啟 | 作者 README 的 client 範例；loopback 加 bearer 已有 smoke 驗證 |
+| D2 | 安裝指南用獨立文件，README 只放連結 | 作者 Linux setup 指南加 README Quick start 的結構 |
+| D3 | setup 入口放在 scripts 目錄 | 作者的安裝腳本都在 scripts |
+| D4 | 預設 repo 集中設定在一處，可以覆寫 | 跟 POC 名稱一樣「集中在一處改」 |
+| D5 | release workflow 不設審批閘門、只給 fork 用 | 作者的 release environment 只放行 `v*` |
+| D6 | `@playwright/mcp@0.0.82` 固定版本 | 作者 macOS 和 Linux 用同一個版本 |
+| D7 | exe 不內建 install 子指令 | 作者各平台都用 pkg 或安裝腳本 |
+| D8 | 旗標命名為 `-NoBrowser` 和 `-NoClaudeCode` | 作者 Linux 安裝程式的 `--no-browser` |
+| T1 | 測試只用一個切入點：setup 加 `-ApiBase` 假伺服器加 Claude Code stub | 使用者同意，2026-10-14 |
 
-## 6. setup-windows.ps1
+**送 upstream PR 時**：作者在 PR #51 規定社群 PR 要附 #openab-pty Discord 的討論連結；要排除 fork 專用的 release workflow；預設 repo 要改成 upstream。
 
-**參數：**
-- `-Version <tag>`：鎖定版本（預設最新 `winpoc-v*`）
-- `-ZipPath <path>`：用本機 ZIP，跳過下載（離線／測試／CI）
-- `-Repo <owner/name>`：預設值放在腳本開頭變數區，POC 期間為 `pro5251/instance-mcp`；併入 upstream 時改成 `openabdev/instance-mcp`（只改一處，同 §13.2 原則）
-- 其餘參數原樣轉給 `install-winpoc.ps1`（`-Token`、`-AllowLogin`、`-SkipTailscale`、`-NoStart`、`-NoBrowser`、`-NoClaudeCode`）
+**附帶發現**：Windows checkout 讓 21 個腳本出現只有檔案模式的差異。2026-10-08 已在這個 repo 設定 `core.fileMode false`，沒有 commit 任何模式變更。
 
-**流程：**
-1. `GET https://api.github.com/repos/<repo>/releases?per_page=30` → 過濾 `tag_name -like 'winpoc-v*'` 且非 draft → 取最新（或 `-Version` 指定）。作者的 Linux quick start 同樣用 releases API 查版本（README「Quick start」）。
-2. 找資產 `oab-imcp-winpoc-<ver>-windows-amd64.zip` 與 `.zip.sha256`。
-3. 下載到 `%TEMP%\oab-imcp-winpoc-<ver>\`；`Get-FileHash -Algorithm SHA256` 比對，不符即中止並刪檔。
-4. `Expand-Archive`；`Unblock-File` 解出的檔案（移除 MOTW，降低 SmartScreen 干擾）。
-5. 執行 `<dir>\install-winpoc.ps1 -Install <轉發參數>`；傳回其 exit code。
-
-**錯誤處理：** 無網路／API rate limit／找不到 release → 明確訊息並提示 `-ZipPath`；雜湊不符 → 中止；installer 失敗 → 原樣傳出訊息與 exit code。
-
-## 7. Browser（Playwright）
-
-依作者 Linux 安裝器（`scripts/install-linux.sh`：「installs @playwright/mcp if node is present」、`--no-browser`）：
-
-1. `-NoBrowser` 或找不到 `node`/`npm` → 跳過，摘要顯示 `browser: skipped (install Node.js, rerun setup)`。
-2. `npm install --prefix %LOCALAPPDATA%\oab-imcp-winpoc\pw-mcp --save-exact @playwright/mcp@0.0.82`（與 macOS `poc/pw-mcp/install.sh`、Linux `docs/linux-setup.md` 同一個 pin）。
-3. `npx --prefix ... playwright install chromium`（同 macOS；Windows 無 distro Chromium）。
-4. 複製 `pw-mcp.ps1` 到 `$ProgDir`；註冊 Scheduled Task `\OpenAB-POC\oab-imcp-winpoc-pw`（§13.2 名稱），設定同 node Task，執行 `powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File pw-mcp.ps1`。
-5. node Task 參數加 `--upstream browser=http://127.0.0.1:8797/mcp`。
-6. 任一步失敗 → 警告、不加 `--upstream`、不中止整體安裝（核心工具優先）。
-
-Uninstall：停止並移除 pw Task；`-Purge` 時連同 `pw-mcp\`、`pw-profile\`、`pw-output\` 刪除。
-
-## 8. Claude Code 註冊
-
-作者的做法：安裝器不碰任何 client 設定；README 提供一行 `kiro-cli mcp add --name <host>-mcp --url <url> --header "Authorization: Bearer $(cat token)" --scope global`，token 最終也以明文存在 client 設定。本功能（Q1）把同一行自動化，行為與作者文件一致：
-
-- 預設執行；`-NoClaudeCode` 關閉。`Get-Command claude` 不存在 → 跳過，印出可貼上的指令。
-- 名稱：`oab-imcp-winpoc`（§13.2 POC 名稱；與使用者既有的 MCP 項目不衝突，uninstall 可安全移除）。
-- Scope：`user`（對應作者範例的 `--scope global`）。
-- URL：**loopback** `http://127.0.0.1:8796/mcp`。client 與 node 同機，不經 Tailscale；loopback + bearer 已由 `windows/smoke_install.sh`（「serves 9 tools with the bearer token」）驗證。
-- 冪等：先 `claude mcp remove oab-imcp-winpoc -s user`（忽略錯誤），再 `claude mcp add --transport http -s user oab-imcp-winpoc http://127.0.0.1:8796/mcp --header "Authorization: Bearer <token>"`（Claude Code 2.1.296 `claude mcp add --help` 已確認語法）。
-- 驗證：`claude mcp get oab-imcp-winpoc` 成功即視為完成；失敗只警告，不中止安裝。
-- `-AllowLogin` 模式（無 token）：不自動註冊，印說明（loopback 沒有 `Tailscale-User-Login`）。
-- Uninstall：`claude mcp remove oab-imcp-winpoc -s user`。
-
-**安全注意：** token 以明文寫入 `~/.claude.json`，與作者 README 的 client 範例相同。摘要提示此點；token 只在 loopback／tailnet 有效。
-
-## 9. 安裝指南與 AI 安裝指引
-
-放 `docs/windows-setup.md`，結構對應作者的 `docs/linux-setup.md`；repo 根 `README.md` Quick start 只加短段落連過去（同 macOS／Linux 的寫法）。
-
-AI 安裝指引一節，與雙擊流程走同一路徑：
-
-1. 確認 Windows、PowerShell 5.1+ 可用。
-2. 在 repo 根目錄執行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1`。
-3. 驗證：`Invoke-WebRequest http://127.0.0.1:8796/healthz` 回 `ok`；`claude mcp list` 含 `oab-imcp-winpoc` 且 Connected。
-4. 常見失敗與對策表（無 release → `-ZipPath`；SmartScreen；Node 缺 → browser skipped；`claude` 不在 PATH）。
-
-## 10. release-windows-poc.yml（fork 專用）
-
-- 觸發：`push: tags: ['winpoc-v*']`、`workflow_dispatch`（input `tag`）。fork 的 Actions 已啟用（`gh api repos/pro5251/instance-mcp/actions/permissions` → `enabled: true`）。
-- `permissions: contents: write`；`runs-on: windows-latest`；`RUSTFLAGS: -C target-feature=+crt-static`。
-- 步驟：checkout tag → rust stable → `cargo build --release`（`poc/reverse-attach-linux`）→ 打包（沿用 `release.yml` windows job 的內容與檔名規則，`<ver>` = tag 去掉 `winpoc-v`）→ `gh release create <tag> --prerelease --title ... <zip> <zip.sha256>`（已存在則 `gh release upload --clobber`）。
-- Actions 版本 pin SHA，與 `release.yml` 一致。
-- **不設 `environment`**：作者的 `release` environment 只放行 `v*` ref，`winpoc-v*` 不符；fork 只有擁有者能推 tag，不需要審批閘門。
-- **不送 upstream**：upstream 的 Windows 發行走 `release.yml` 既有 windows job（隨 `v*` 與 macOS／Linux 一起發）。送 PR 時排除此檔。
-
-## 11. 測試
-
-- **單元／靜態：** `setup-windows.ps1` 的 release 選擇與雜湊比對拆成函式，以假 release JSON 測。
-- **整合：** 擴充 `windows/smoke_install.sh`：用 `-ZipPath`（本機打包的 ZIP）跑 `setup-windows.ps1 -NoStart`；檢查 Task、pw Task（有 node 時）、`--upstream` 參數、Claude Code 註冊（PATH 放 stub `claude.cmd` 記錄參數，不改真實設定）。
-- **Uninstall 對稱：** 安裝 → 移除 → Task、pw Task、Claude Code 註冊皆不存在。
-- **回歸門檻：** §3 四項不退步（本變更不碰 Rust，預期不受影響）。
-- **手動：** 乾淨 Windows 帳號從 clone 雙擊 `scripts\setup-windows.cmd` 一次走完；加入 `MANUAL-ACCEPTANCE.md`。
-- **Release：** 在 fork 推 `winpoc-v0.0.1-rc1` 驗證 workflow，同時補上 G2「MSVC 版從未編過」的缺口。
-
-## 12. 決策紀錄（2026-10-14，依作者做法定案）
-
-upstream `openabdev/instance-mcp` main 為 `f456d04`（0.8.0），與本機一致，無需 pull。
-
-| # | 問題 | 決定 | 依據 |
-|---|---|---|---|
-| D1 | Claude Code 註冊細節 | 名稱 `oab-imcp-winpoc`、user scope、loopback URL、明文 token、預設開＋`-NoClaudeCode` | 作者 README client 範例（`mcp add … --header Bearer … --scope global`）；loopback bearer 已有 smoke 驗證 |
-| D2 | AI 安裝指引放哪 | `docs/windows-setup.md`；`README.md` Quick start 加短段落 | 作者 `docs/linux-setup.md` ＋ README Quick start 結構 |
-| D3 | setup 腳本放哪 | `scripts/setup-windows.{cmd,ps1}` | 作者安裝腳本都在 `scripts/`（`install-linux.sh`、`install-prebuilt.sh`）；根目錄沒有平台入口 |
-| D4 | 預設 repo | 腳本開頭變數 `pro5251/instance-mcp`，`-Repo` 可覆寫 | §13.2「名稱集中一處」原則 |
-| D5 | Release 審批閘門 | 不設 environment；workflow 僅限 fork | 作者 `release` environment 只放行 `v*`；upstream 走 `release.yml` |
-| D6 | `@playwright/mcp` 版本 | `0.0.82`，`--save-exact` | 作者 macOS／Linux 同一 pin |
-| D7 | exe 內建 `install` 子指令 | 不開 ticket，列非目標 | 作者各平台都用原生安裝形式（pkg／shell script）；Windows 用 PowerShell 腳本已對齊；MSI/winget 屬作者的發行決定（同 code signing） |
-| D8 | 旗標命名 | `-NoBrowser`（原提案 `-SkipPlaywright`）、`-NoClaudeCode` | 作者 `install-linux.sh` 的 `--no-browser` |
-
-**送 upstream PR 時注意：** 作者 PR #51 要求社群 PR 附 #openab-pty Discord 討論連結；`release-windows-poc.yml` 與 `-Repo` 預設值要調整（D4、D5）。
-
-## 13. 附帶發現（與本功能無關）
-
-工作樹 21 個 `.sh`/`.py` 只有檔案模式差異（Windows checkout 造成）。2026-10-08 已設定本 repo `core.fileMode false`，未 commit 任何模式變更。
+**建議的 ticket 依賴順序**：release workflow → setup bootstrap（含假伺服器測試）→ browser 段和 Claude Code 段（兩者可以平行做）→ 文件和實機驗收。
