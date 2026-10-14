@@ -106,7 +106,7 @@ Release 由 fork 專用的獨立 workflow 產生，只有推 `winpoc-v*` tag 或
   - 為了可以重複執行：先移除同名項目（忽略錯誤），再新增，最後用 get 確認。驗證失敗只警告。
   - 找不到 `claude` 時，印出可以直接貼上的指令。
   - `-AllowLogin` 模式下沒有 token，所以不註冊並說明原因：走 loopback 時不會帶 Tailscale 身分。
-- **其他 MCP client（v0.4，ticket 08）**：一張 client 表（偵測、加入、移除、確認），安裝與解除安裝都跑同一張表，名稱同樣用 `oab-imcp-winpoc`、URL 同樣是 loopback。任何 client 失敗都只警告。
+- **其他 MCP client（v0.4，ticket 08）**：一張 client 表（偵測、加入、移除、確認），安裝與解除安裝都跑同一張表，名稱同樣用 `oab-imcp-winpoc`、URL 同樣是 loopback。任何 client 失敗都只警告。確認 = `mcp get`／`mcp list` 的輸出裡有這個名稱。解除安裝一律清除每個 client（不看 `-Clients`；`-NoClients` 才全部跳過），VS Code 的 `mcp.json` 即使 `code` 已不在 PATH 也會清。
   - Codex CLI：`codex mcp remove` → `codex mcp add <name> --url <url> --bearer-token-env-var OAB_IMCP_WINPOC_TOKEN` → `codex mcp get`。token 寫進使用者環境變數 `OAB_IMCP_WINPOC_TOKEN`（Codex CLI 只支援從環境變數讀 bearer token）；已開的終端機要重開。解除安裝刪除該變數。
   - GitHub Copilot CLI：`copilot mcp remove` → `copilot mcp add --transport http <name> <url> --header "Authorization: Bearer …"` → `copilot mcp get`（`~\.copilot\mcp-config.json`）。
   - VS Code（Copilot Chat）與 Insiders：VS Code 沒有移除用的 CLI，`--add-mcp` 的 JSON 參數經 PowerShell 5.1 傳給 `.cmd` 會被破壞引號，所以直接編輯使用者 `mcp.json`（`%APPDATA%\Code\User\mcp.json`、`%APPDATA%\Code - Insiders\User\mcp.json`）的 `servers.<name>`（`type: http`、`url`、`headers`），其餘內容保留，第一次修改前留備份；檔案無法解析（例如有註解）就不動它，只警告並印出要貼的片段。偵測依據是 PATH 上有 `code` / `code-insiders`。

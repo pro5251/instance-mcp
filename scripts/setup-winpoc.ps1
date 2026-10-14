@@ -8,7 +8,7 @@
     Usage:
       setup-winpoc.ps1 [-Version <tag>] [-ZipPath <zip>] [-Repo <owner/name>] [-ApiBase <url>]
                        [installer args: -Token <str> | -AllowLogin <email>, -NoBrowser,
-                        -NoClaudeCode, -Uninstall [-Purge], -Status, ...]
+                        -Clients <list> | -NoClients, -Uninstall [-Purge], -Status, ...]
 
       -Version  install this release (winpoc-v0.0.1 or 0.0.1) instead of the newest winpoc-v*
       -ZipPath  install from a local ZIP: no download, no hash check (offline / rate limited)

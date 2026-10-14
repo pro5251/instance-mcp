@@ -76,3 +76,7 @@ uninstall / `-Purge`). `exec_start`/GUI-child survival is also confirmed nativel
       page and `browser_snapshot` succeed from Claude Code through `oab-imcp-winpoc`.
 - [ ] **Logon autostart of both tasks**: sign out and in; `\OpenAB-POC\oab-imcp-winpoc` and
       `\OpenAB-POC\oab-imcp-winpoc-pw` both start, `browser_*` are listed again.
+- [ ] **Each real client**: with Codex CLI, GitHub Copilot CLI, VS Code (or Insiders) and Gemini
+      CLI installed, setup lists each as `registered`; in a new terminal each one lists
+      `oab-imcp-winpoc` and can call `sys_info` (the smoke only drives stubs: this is the
+      first run against the real Codex, Copilot and Gemini CLIs). Uninstall removes all of them and `OAB_IMCP_WINPOC_TOKEN`.

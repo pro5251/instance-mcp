@@ -93,7 +93,8 @@ The URL is `https://<host>.<tailnet>.ts.net:8444/mcp` and the bearer token is in
 
 **Windows (POC)** — clone the repo and double-click `scripts\setup-winpoc.cmd`: it installs the
 node for your user (no admin), adds browser tools when Node.js is present and registers it with
-Claude Code ([guide](docs/windows-setup.md)).
+the local AI clients it finds: Claude Code, Codex, GitHub Copilot, VS Code, Gemini
+([guide](docs/windows-setup.md)).
 
 ## Platforms
 

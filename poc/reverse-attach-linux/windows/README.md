@@ -35,11 +35,12 @@ installer then runs `tailscale serve` for you and prints an `https://…ts.net/m
 - **Browser tools** (`browser_*`): with [Node.js](https://nodejs.org) installed, the installer
   sets up `@playwright/mcp` 0.0.82 + Chromium as a second logon task (`pw-mcp.ps1`) and has the
   node re-serve it. Installed Node.js later? Run the installer again. `-NoBrowser` skips it.
-- **Claude Code**: with `claude` on PATH, the installer registers the node as user-scope MCP
-  server `oab-imcp-winpoc` (loopback URL + bearer token; the token is then stored in plain
-  text in Claude Code's config). Otherwise it prints the command to paste. `-NoClaudeCode`
-  skips it.
-- **Other MCP clients** can point at the printed loopback URL with the bearer token.
+- **AI clients**: the installer registers the node as MCP server `oab-imcp-winpoc` (loopback
+  URL + bearer token, user level) in every client it finds: Claude Code, Codex CLI, GitHub
+  Copilot CLI, VS Code / Insiders, Gemini CLI. The token is then stored in plain text in
+  their configs (Codex: user env var `OAB_IMCP_WINPOC_TOKEN`). `-Clients codex,vscode` picks
+  some, `-NoClients` none.
+- **Any other MCP client** can point at the printed loopback URL with the bearer token.
 
 ## Manage
 
@@ -48,7 +49,7 @@ installer then runs `tailscale serve` for you and prints an `https://…ts.net/m
   `install.cmd` again (your token is kept).
 - Remove: double-click `uninstall.cmd` (add `-Purge` in a shell to also delete the token,
   saved grants and the browser profile). Uninstall also removes the Playwright task and the
-  Claude Code registration.
+  client registrations.
 
 ## Tools
 
