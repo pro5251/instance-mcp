@@ -62,6 +62,9 @@ uninstall / `-Purge`). `exec_start`/GUI-child survival is also confirmed nativel
 
 ## One-step setup (docs/windows-setup.md)
 
+On a clean machine, run these through [`VM-ACCEPTANCE.md`](VM-ACCEPTANCE.md): a Hyper-V VM
+with Claude Code inside, one prompt per test.
+
 - [x] **End-to-end release**: push `v0.8.0-winpoc.1` on the fork; `release.yml` runs
       `fork-release` (the macOS job is skipped), the Linux and Windows jobs upload, and the
       prerelease carries `oab-imcp-winpoc-0.8.0-winpoc.1-windows-amd64.zip` + `.sha256` and the
